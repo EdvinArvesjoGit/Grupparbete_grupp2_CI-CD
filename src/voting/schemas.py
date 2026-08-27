@@ -1,0 +1,16 @@
+VOTING_COLUMNS = [
+    "rm",
+    "beteckning",
+    "votering_id",
+    "punkt",
+    "namn",
+    "intressent_id",
+    "parti",
+    "valkrets",
+    "rost",
+    "avser",
+    "banknummer",
+    "kon",
+    "fodd",
+    "datum",
+]
