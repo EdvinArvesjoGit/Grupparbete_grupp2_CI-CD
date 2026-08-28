@@ -5,3 +5,30 @@ __pycache__/
 *.pyo
 env/
 venv/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Environment
+.env
+.env.local
+
+# Data — never commit extracted data
+data/raw/
+data/*.csv
+data/*.zip
+data/*.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

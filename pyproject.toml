@@ -1,0 +1,20 @@
+[project]
+name = "riksdag-etl"
+version = "0.1.0"
+description = "ETL pipeline over Sveriges riksdag open data"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "data", "__pycache__"]
+
+[tool.ruff.lint]
+# Deliberately lenient to start. Add rules by team agreement, not unilaterally.
+#   E/W = pycodestyle,  F = pyflakes,  I = import sorting,  UP = pyupgrade
+select = ["E", "W", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
