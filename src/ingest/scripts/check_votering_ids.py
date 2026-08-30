@@ -1,3 +1,59 @@
+"""
+Validation script for Riksdagen voting data.
+
+Purpose
+-------
+This script checks whether a combination of:
+
+    rm + beteckning (bet) + punkt
+
+always corresponds to exactly one `votering_id`.
+
+The check is important because the voting API is queried by `rm`, `bet`,
+and `punkt` when fetching detailed voting records. If one combination can
+contain multiple voting events, `rm + bet + punkt` must not be treated as
+a unique identifier for a voting event.
+
+Method
+------
+For each riksmöte from 2022/23 to 2025/26:
+
+1. Fetch all `bet + punkt` combinations using `gruppering=bet`.
+2. Fetch the detailed voting records for each combination.
+3. Count the number of distinct `votering_id` values.
+4. Report combinations containing more than one `votering_id`.
+
+Result
+------
+The validation found 18 combinations with multiple `votering_id` values:
+
+    2025/26: 7 combinations
+    2024/25: 3 combinations
+    2023/24: 5 combinations
+    2022/23: 3 combinations
+
+All 18 cases contained:
+    - 2 distinct votering_id values
+    - 698 rows in total (2 x 349)
+
+Conclusion
+----------
+`rm + bet + punkt` is NOT guaranteed to uniquely identify a voting event.
+
+`votering_id` should therefore be used to distinguish separate voting
+events. For an individual member's vote, the combination of
+`votering_id` and `intressent_id` is a candidate unique key and should
+be validated separately before adding a database constraint.
+
+The largest `rm + bet + punkt` group observed in these four riksmöten
+contained 698 rows, which is well below the tested API response limit
+of 10,000 rows. The ingestion pipeline should still validate response
+sizes instead of assuming that this will always remain true.
+
+This is a development/validation script and is not part of the production
+ingestion pipeline.
+"""
+
 import time
 
 import requests

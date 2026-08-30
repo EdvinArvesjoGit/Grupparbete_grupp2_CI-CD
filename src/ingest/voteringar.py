@@ -138,6 +138,19 @@ def get_connection():
         password=os.getenv("DB_PASSWORD"),
     )
 
+def get_existing_groups(conn, rm: str) -> set[tuple[str, str]]:
+    """Get already loaded beteckning + punkt combinations for one riksmöte."""
+
+    sql = """
+        SELECT DISTINCT beteckning, punkt
+        FROM stg.votering
+        WHERE rm = %s;
+    """
+
+    with conn.cursor() as cursor:
+        cursor.execute(sql, (rm,))
+        return set(cursor.fetchall())
+
 
 def insert_voteringar(conn, votes: list[dict]) -> int:
     """Insert voting records into stg.votering."""
@@ -212,25 +225,25 @@ def main():
         total_inserted = 0
 
         for rm in RIKSMOTEN:
-            print(f"\nFetching voting groups for {rm}...")
+            print(f"\nChecking voting groups for {rm}...")
 
             groups = fetch_voting_groups(rm)
+            existing_groups = get_existing_groups(conn, rm)
 
-            print(f"Found {len(groups)} bet + punkt combinations.")
+            new_groups = [
+                group for group in groups if (group["bet"], group["punkt"]) not in existing_groups
+            ]
+
+            print(f"Found {len(groups)} groups, {len(new_groups)} new.")
 
             rm_inserted = 0
 
-            for index, group in enumerate(groups, start=1):
+            for index, group in enumerate(new_groups, start=1):
                 bet = group["bet"]
                 punkt = group["punkt"]
-
                 expected_count = get_expected_count(group)
 
-                print(
-                    f"[{index}/{len(groups)}] "
-                    f"Fetching {rm} {bet} punkt {punkt} "
-                    f"(expected {expected_count} rows)..."
-                )
+                print(f"[{index}/{len(new_groups)}] Fetching new group: {rm} {bet} punkt {punkt}")
 
                 votes = fetch_voteringar(
                     rm=rm,
@@ -253,13 +266,12 @@ def main():
 
                 time.sleep(REQUEST_DELAY)
 
-            print(f"Finished {rm}: {rm_inserted} rows inserted.")
+            print(f"Finished {rm}: {rm_inserted} new rows inserted.")
 
-        print(f"\nDone. Total inserted rows: {total_inserted}")
+        print(f"\nDone. Total new rows inserted: {total_inserted}")
 
     finally:
         conn.close()
-
 
 if __name__ == "__main__":
     main()
