@@ -30,4 +30,7 @@ CREATE TABLE IF NOT EXISTS stg.votering (
     systemdatum         TIMESTAMP,       -- Timestamp from source API
 
     loaded_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+    CONSTRAINT uq_votering_member
+        UNIQUE (votering_id, intressent_id)
 );

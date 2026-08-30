@@ -119,11 +119,7 @@ def main():
 
             votes = fetch_votes(rm, bet, punkt)
 
-            votering_ids = {
-                vote.get("votering_id")
-                for vote in votes
-                if vote.get("votering_id")
-            }
+            votering_ids = {vote.get("votering_id") for vote in votes if vote.get("votering_id")}
 
             if len(votering_ids) > 1:
                 multiple_votering_ids.append(
@@ -151,15 +147,9 @@ def main():
     print("\n--- RESULT ---")
 
     if not multiple_votering_ids:
-        print(
-            "No bet + punkt combination had more than one votering_id "
-            "in the checked riksmöten."
-        )
+        print("No bet + punkt combination had more than one votering_id in the checked riksmöten.")
     else:
-        print(
-            f"Found {len(multiple_votering_ids)} combinations "
-            "with multiple votering_ids:"
-        )
+        print(f"Found {len(multiple_votering_ids)} combinations with multiple votering_ids:")
 
         for item in multiple_votering_ids:
             print(

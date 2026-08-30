@@ -138,6 +138,7 @@ def get_connection():
         password=os.getenv("DB_PASSWORD"),
     )
 
+
 def get_existing_groups(conn, rm: str) -> set[tuple[str, str]]:
     """Get already loaded beteckning + punkt combinations for one riksmöte."""
 
@@ -150,6 +151,15 @@ def get_existing_groups(conn, rm: str) -> set[tuple[str, str]]:
     with conn.cursor() as cursor:
         cursor.execute(sql, (rm,))
         return set(cursor.fetchall())
+
+
+def get_new_groups(
+    groups: list[dict],
+    existing_groups: set[tuple[str, str]],
+) -> list[dict]:
+    """Return voting groups that have not yet been loaded."""
+
+    return [group for group in groups if (group["bet"], group["punkt"]) not in existing_groups]
 
 
 def insert_voteringar(conn, votes: list[dict]) -> int:
@@ -230,9 +240,7 @@ def main():
             groups = fetch_voting_groups(rm)
             existing_groups = get_existing_groups(conn, rm)
 
-            new_groups = [
-                group for group in groups if (group["bet"], group["punkt"]) not in existing_groups
-            ]
+            new_groups = get_new_groups(groups, existing_groups)
 
             print(f"Found {len(groups)} groups, {len(new_groups)} new.")
 
@@ -272,6 +280,7 @@ def main():
 
     finally:
         conn.close()
+
 
 if __name__ == "__main__":
     main()
