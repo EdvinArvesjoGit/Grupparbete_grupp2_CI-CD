@@ -1,6 +1,10 @@
 import json
+from uuid import uuid4
 
 import requests
+from sqlalchemy import text
+
+from src.common.db import get_engine
 
 API_URL = "https://data.riksdagen.se/personlista/"
 
@@ -151,30 +155,188 @@ def parse_person_uppgift(person):
     return parsed_uppgifter
 
 
-if __name__ == "__main__":
-    # Temporary manual check before database loading is implemented.
+def load_personer(personer, korning_id):
+    """Load parsed person rows into stg.person."""
+    rows = []
+
+    for person in personer:
+        row = parse_person(person)
+        row["_kalla"] = API_URL
+        row["_korning_id"] = korning_id
+        rows.append(row)
+
+    sql = text(
+        """
+        INSERT INTO stg.person (
+            hangar_guid,
+            sourceid,
+            intressent_id,
+            hangar_id,
+            fodd_ar,
+            kon,
+            efternamn,
+            tilltalsnamn,
+            sorteringsnamn,
+            iort,
+            parti,
+            valkrets,
+            status,
+            person_url_xml,
+            bild_url_80,
+            bild_url_192,
+            bild_url_max,
+            _kalla,
+            _korning_id
+        )
+        VALUES (
+            :hangar_guid,
+            :sourceid,
+            :intressent_id,
+            :hangar_id,
+            :fodd_ar,
+            :kon,
+            :efternamn,
+            :tilltalsnamn,
+            :sorteringsnamn,
+            :iort,
+            :parti,
+            :valkrets,
+            :status,
+            :person_url_xml,
+            :bild_url_80,
+            :bild_url_192,
+            :bild_url_max,
+            :_kalla,
+            :_korning_id
+        )
+        """
+    )
+
+    with get_engine().begin() as conn:
+        conn.execute(text("TRUNCATE stg.person"))
+        conn.execute(sql, rows)
+
+    return len(rows)
+
+
+def load_person_uppdrag(personer, korning_id):
+    """Load parsed assignment rows into stg.person_uppdrag."""
+    rows = []
+
+    for person in personer:
+        rows.extend(parse_person_uppdrag(person))
+
+    for row in rows:
+        row["_kalla"] = API_URL
+        row["_korning_id"] = korning_id
+
+    sql = text(
+        """
+        INSERT INTO stg.person_uppdrag (
+            organ_kod,
+            roll_kod,
+            ordningsnummer,
+            status,
+            typ,
+            fran_datum,
+            tom_datum,
+            uppgift,
+            intressent_id,
+            hangar_id,
+            sortering,
+            organ_sortering,
+            uppdrag_rollsortering,
+            uppdrag_statussortering,
+            _kalla,
+            _korning_id
+        )
+        VALUES (
+            :organ_kod,
+            :roll_kod,
+            :ordningsnummer,
+            :status,
+            :typ,
+            :fran_datum,
+            :tom_datum,
+            :uppgift,
+            :intressent_id,
+            :hangar_id,
+            :sortering,
+            :organ_sortering,
+            :uppdrag_rollsortering,
+            :uppdrag_statussortering,
+            :_kalla,
+            :_korning_id
+        )
+        """
+    )
+
+    with get_engine().begin() as conn:
+        conn.execute(text("TRUNCATE stg.person_uppdrag"))
+        conn.execute(sql, rows)
+
+    return len(rows)
+
+
+def load_person_uppgift(personer, korning_id):
+    """Load parsed person detail rows into stg.person_uppgift."""
+    rows = []
+
+    for person in personer:
+        rows.extend(parse_person_uppgift(person))
+
+    for row in rows:
+        row["_kalla"] = API_URL
+        row["_korning_id"] = korning_id
+
+    sql = text(
+        """
+        INSERT INTO stg.person_uppgift (
+            kod,
+            uppgift,
+            typ,
+            intressent_id,
+            hangar_id,
+            _kalla,
+            _korning_id
+        )
+        VALUES (
+            :kod,
+            :uppgift,
+            :typ,
+            :intressent_id,
+            :hangar_id,
+            :_kalla,
+            :_korning_id
+        )
+        """
+    )
+
+    with get_engine().begin() as conn:
+        conn.execute(text("TRUNCATE stg.person_uppgift"))
+        conn.execute(sql, rows)
+
+    return len(rows)
+
+
+def main():
+    """Fetch, parse, and load member data into the staging database."""
+    korning_id = str(uuid4())
+
     data = fetch_ledamoter()
     personer = get_personer(data)
 
-    print(f"Hämtade {len(personer)} personer")
+    print(f"Fetched {len(personer)} persons")
 
-    if personer:
-        person = personer[0]
+    antal_personer = load_personer(personer, korning_id)
+    print(f"Loaded {antal_personer} rows into stg.person")
 
-        parsed_person = parse_person(person)
-        print("Person:")
-        print(parsed_person)
+    antal_uppdrag = load_person_uppdrag(personer, korning_id)
+    print(f"Loaded {antal_uppdrag} rows into stg.person_uppdrag")
 
-        parsed_uppdrag = parse_person_uppdrag(person)
-        print(f"Antal uppdrag: {len(parsed_uppdrag)}")
+    antal_uppgifter = load_person_uppgift(personer, korning_id)
+    print(f"Loaded {antal_uppgifter} rows into stg.person_uppgift")
 
-        if parsed_uppdrag:
-            print("Första uppdraget:")
-            print(parsed_uppdrag[0])
 
-        parsed_uppgifter = parse_person_uppgift(person)
-        print(f"Antal personuppgifter: {len(parsed_uppgifter)}")
-
-        if parsed_uppgifter:
-            print("Första personuppgiften:")
-            print(parsed_uppgifter[0])
+if __name__ == "__main__":
+    main()
