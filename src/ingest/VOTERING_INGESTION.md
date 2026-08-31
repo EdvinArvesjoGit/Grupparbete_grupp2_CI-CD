@@ -2,168 +2,185 @@
 
 ## Overview
 
-Voting data is fetched from the Riksdagen voting API:
+Voting data is fetched from Riksdagens öppna data API using two endpoints:
 
-`https://data.riksdagen.se/voteringlista/`
+- `https://data.riksdagen.se/voteringlista/`
+- `https://data.riksdagen.se/votering/{votering_id}`
 
-The ingestion uses `beteckning + punkt` as the API fetch group.
+The ingestion uses `votering_id` as the unit for detecting and fetching new voting events.
 
-This decision is based on tests performed in Postman and validation
-queries against the staging data.
+The first endpoint is used to discover voting events for each riksmöte (`rm`). The second endpoint returns the detailed member voting records for one specific voting event in XML format.
 
 ## API Strategy
 
 The ingestion is performed in two steps for each riksmöte (`rm`).
 
-### Step 1: Fetch voting groups
+### Step 1: Fetch voting events
 
 The first request uses:
 
-``` text
+```text
 rm=<riksmöte>
-gruppering=bet
+gruppering=votering_id
 sz=10000
 utformat=json
 ```
 
-Although the API parameter is named `bet`, the Riksdagen search
-interface describes this grouping as:
+This returns one grouped result for each `votering_id`.
 
-``` text
-Votering (bet + punkt)
+For example, each result contains the voting event identifier together with aggregated vote counts such as:
+
+```text
+votering_id
+Ja
+Nej
+Avstår
+Frånvarande
 ```
 
-The returned groups represent combinations of `beteckning` and `punkt`.
+The vote counts are also used to calculate the expected number of detailed member records for the voting event.
 
-For example:
-
-``` text
-2025/26:AU10p3
-```
-
-represents:
-
-``` text
-rm = 2025/26
-beteckning = AU10
-punkt = 3
-```
+Existing `votering_id` values in `stg.votering` are compared with the API result so that only new voting events are fetched.
 
 ### Step 2: Fetch detailed voting records
 
-Each returned `beteckning + punkt` combination is then used to fetch the
-detailed voting records:
+For each new `votering_id`, the detailed records are fetched from:
 
-``` text
-rm=<riksmöte>
-bet=<beteckning>
-punkt=<punkt>
-sz=10000
-utformat=json
+```text
+https://data.riksdagen.se/votering/{votering_id}
 ```
 
-This request returns the individual member voting records for the
-selected group. These records are then loaded into `stg.votering`.
+This endpoint returns XML.
 
-## Why Use `beteckning + punkt` for API Fetching?
+The individual voting records are located under:
 
-Different API approaches were tested in Postman.
-
-### Grouping by `votering_id`
-
-The API supports:
-
-``` text
-gruppering=votering_id
+```xml
+<dokvotering>
+    <votering>
+        ...
+    </votering>
+</dokvotering>
 ```
 
-This successfully returns the voting events for a riksmöte.
+Each outer `<votering>` element represents one member's record in the voting event.
 
-For example, `rm=2025/26` returned 794 unique `votering_id` groups.
+The XML fields are parsed and loaded into `stg.votering`.
 
-However, `votering_id` could not be used as a filter in a second
-`voteringlista` request to retrieve the detailed member voting records.
+The XML source field `<källa>` is mapped to the database column `kalla`.
 
-When `votering_id` was supplied as a filter, the API did not restrict
-the result to that voting event and returned up to the configured
-`sz=10000` rows.
+The audit column `_kalla` stores the API endpoint used to fetch the voting event, for example:
 
-Therefore, grouping by `votering_id` cannot be used for the complete
-two-step ingestion flow.
+```text
+https://data.riksdagen.se/votering/{votering_id}
+```
 
-### Grouping by `bet`
+## Why Use `votering_id` for Ingestion?
 
-Using:
+Earlier testing used:
 
-``` text
+```text
 gruppering=bet
 ```
 
-returns the `beteckning + punkt` groups for a riksmöte.
+where `bet` represents a `beteckning + punkt` combination.
 
-These values can then be used successfully as filters in the second API
-request:
+This approach could be used to fetch groups and then retrieve detailed records using:
 
-``` text
+```text
 rm + bet + punkt
 ```
 
-This returns the detailed member voting records for the selected voting
-group.
+However, SQL validation showed that one `rm + beteckning + punkt` combination can contain more than one `votering_id`.
 
-For this reason, `beteckning + punkt` is used as the API fetch unit.
+Therefore, `beteckning + punkt` represents an issue/group and must not be treated as the identifier of an individual voting event.
 
-## SQL Validation
+Further API testing showed that:
 
-The staging data was checked to compare the number of
-`beteckning + punkt` combinations with the number of unique
-`votering_id` values.
-
-  rm          beteckning + punkt   votering_id
-  --------- -------------------- -------------
-  2022/23                    562           565
-  2023/24                    589           594
-  2024/25                    649           652
-  2025/26                    787           794
-
-The number of `beteckning + punkt` groups for every riksmöte is well
-below the API limit of 10,000 results.
-
-Therefore, all voting groups for one riksmöte can be fetched in a single
-grouped request using:
-
-``` text
-gruppering=bet
-sz=10000
+```text
+gruppering=votering_id
 ```
 
-The SQL validation also shows that one `beteckning + punkt` combination
-can be associated with more than one `votering_id`.
+can be used to discover the individual voting events, and the dedicated endpoint:
 
-Therefore, `beteckning + punkt` is used only as the API fetch group. It
-is not treated as the unique identifier of a voting event.
+```text
+/votering/{votering_id}
+```
+
+can then be used to retrieve the detailed member records for each event.
+
+This provides a more direct ingestion flow:
+
+```text
+riksmöte
+    -> grouped votering_id values
+    -> new votering_id values
+    -> /votering/{votering_id}
+    -> member voting records
+    -> stg.votering
+```
+
+## Validation
+
+### Expected row count
+
+The grouped `voteringlista` response contains counts for:
+
+- `Ja`
+- `Nej`
+- `Avstår`
+- `Frånvarande`
+
+These values are summed to calculate the expected number of member records.
+
+After the XML response is parsed, the number of detailed records is compared with this expected count.
+
+If the counts do not match, the ingestion raises an error instead of silently loading an incomplete voting event.
+
+### Voting event identifier
+
+The parsed XML records are also checked to verify that their `votering_id` matches the voting event requested from the API.
+
+### Voting groups
+
+SQL validation shows that one `rm + beteckning + punkt` combination can contain multiple `votering_id` values.
+
+This confirms that:
+
+- `rm + beteckning + punkt` represents a voting issue/group.
+- `votering_id` identifies an individual voting event.
+- `(votering_id, intressent_id)` identifies an individual member's vote.
 
 ## Identifiers
 
-The ingestion uses the fields for different purposes:
+The ingestion uses the identifiers for different purposes:
 
--   `rm` identifies the riksmöte.
--   `beteckning + punkt` identifies the group used for API fetching.
--   `votering_id` identifies an individual voting event.
--   `(votering_id, intressent_id)` identifies an individual member's
-    vote.
+- `rm` identifies the riksmöte.
+- `beteckning + punkt` describes the voting issue/group.
+- `votering_id` identifies an individual voting event.
+- `intressent_id` identifies a member.
+- `(votering_id, intressent_id)` identifies an individual member's vote.
 
-The staging table enforces uniqueness for individual member votes with:
+The staging table enforces uniqueness with:
 
-``` sql
+```sql
 UNIQUE (votering_id, intressent_id)
 ```
 
 The insert also uses:
 
-``` sql
+```sql
 ON CONFLICT (votering_id, intressent_id)
 DO NOTHING;
 ```
 
 This prevents duplicate member voting records from being inserted.
+
+## Incremental Loading
+
+For each riksmöte, the ingestion reads the existing `votering_id` values from `stg.votering`.
+
+These are compared with the grouped `votering_id` values returned by the API.
+
+Only voting events that do not already exist in the staging table are fetched from the XML endpoint and inserted.
+
+This allows the ingestion script to be run repeatedly without reloading voting events that have already been stored.

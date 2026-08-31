@@ -1,31 +1,17 @@
--- Validate the relationship between beteckning + punkt and votering_id.
+-- Check whether one rm + beteckning + punkt combination
+-- can contain more than one voting event (votering_id).
 --
--- A beteckning + punkt combination usually represents one voting item,
--- but it is not unique for a voting event. The same combination can have
--- more than one votering_id.
+-- Purpose:
+-- rm + beteckning + punkt represents a voting issue/group in the source data.
+-- This check verifies whether the same issue can contain multiple
+-- individual voting events.
 
-
--- 1. Compare the number of voting items and voting events for each riksmöte.
-SELECT
-    rm,
-    COUNT(
-        DISTINCT CONCAT_WS('|', beteckning, punkt)
-    ) AS bet_punkt_count,
-    COUNT(DISTINCT votering_id) AS votering_id_count,
-    COUNT(DISTINCT votering_id)
-        - COUNT(DISTINCT CONCAT_WS('|', beteckning, punkt)) AS difference
-FROM stg.votering
-GROUP BY rm
-ORDER BY rm;
-
-
--- 2. Find beteckning + punkt combinations associated with
--- more than one voting event.
 SELECT
     rm,
     beteckning,
     punkt,
-    COUNT(DISTINCT votering_id) AS votering_count
+    COUNT(DISTINCT votering_id) AS votering_id_count,
+    COUNT(*) AS row_count
 FROM stg.votering
 GROUP BY
     rm,
@@ -38,9 +24,16 @@ ORDER BY
     punkt;
 
 
--- Conclusion:
--- A beteckning + punkt combination can be associated with
--- more than one votering_id.
--- Each votering_id represents an individual voting event.
--- Both the number of beteckning + punkt groups and votering_id values
--- per riksmöte are well below the API limit of 10,000 results.
+/*
+Conclusion
+----------
+A single rm + beteckning + punkt combination can contain multiple
+votering_id values.
+
+Therefore:
+
+- rm + beteckning + punkt represents an issue/group, not a single voting event.
+- It must not be used as the unique identifier of a voting event.
+- votering_id identifies the individual voting event.
+- (votering_id, intressent_id) identifies an individual member's vote.
+*/
