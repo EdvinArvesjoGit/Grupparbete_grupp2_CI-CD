@@ -29,9 +29,11 @@ exists.
 
 **Three rules that keep the layers usable:**
 
-1. **`stg` mirrors the source.** No renamed business columns, no filtering, no
-   deduplication, no type cleverness. Text stays text. All cleaning happens in
-   the transform step, where it is visible in a diff and testable.
+1. **`stg` mirrors the source.** Source fields are preserved except for minimal
+   identifier normalization required by the project's naming conventions.
+   No filtering, no deduplication, no type cleverness. Text stays text. All
+   cleaning happens in the transform step, where it is visible in a diff and
+   testable.
 2. **Reports never read `stg`.** P4 and P5 query `dw` exclusively. If something
    needed for a report is missing from `dw`, that is a change request to P3, not
    a shortcut into staging.
@@ -76,8 +78,9 @@ Cheap, and they make load problems diagnosable instead of mysterious:
 
 | Table | Owner | Grain | Business key |
 |---|---|---|---|
-| `stg.person` | **P1** | one row per person | `intressent_id` |
-| `stg.person_uppdrag` | **P1** | one row per assignment (uppdrag) | `intressent_id` + organ + role + `fran_datum` |
+| `stg.person` | **P1** | one row per person | TBD — unique source key to be confirmed |
+| `stg.person_uppdrag` | **P1** | one row per assignment (uppdrag) | TBD — no unique source key verified |
+| `stg.person_uppgift` | **P1** | one row per person detail (uppgift) | TBD — no unique source key verified |
 | `stg.votering` | **P2** | one row per member per vote | `votering_id` + `intressent_id` |
 | `stg.organ` | *open* | one row per committee/body | `organ_kod` |
 | `stg.roll` | *open* | one row per role type | `roll_kod` |
@@ -90,19 +93,43 @@ rm, beteckning, votering_id, punkt, namn, intressent_id, parti,
 valkrets, rost, avser, banknummer, kon, fodd, datum
 ```
 
-**`stg.person` / `stg.person_uppdrag`** — documented member dataset fields,
-snake_cased:
+**`stg.person`** — verified top-level fields from the live member API,
+following the project's `snake_case` naming conventions:
 
-```
-fornamn, efternamn, iort, parti, intressent_id, kon, fodd_ar, valkrets,
-status, webbadress, epostadress, telefonnummer, titel,
-uppdrag_typ, uppdrag_organ, uppdrag_roll, uppdrag_roll_status,
-uppdrag_fran_datum, uppdrag_tom_datum
+```text
+hangar_guid, sourceid, intressent_id, hangar_id, fodd_ar, kon,
+efternamn, tilltalsnamn, sorteringsnamn, iort, parti, valkrets,
+status, person_url_xml, bild_url_80, bild_url_192, bild_url_max
 ```
 
-> The member dataset returns **one row per uppdrag**, so several rows per person.
-> Splitting it into `stg.person` (one row per person) and `stg.person_uppdrag`
-> (one row per assignment) is what makes the SCD-2 dimension possible later.
+**`stg.person_uppdrag`** — verified fields from `personuppdrag.uppdrag`,
+following the project's `snake_case` naming conventions:
+
+```text
+organ_kod, roll_kod, ordningsnummer, status, typ, fran_datum,
+tom_datum, uppgift, intressent_id, hangar_id, sortering,
+organ_sortering, uppdrag_rollsortering, uppdrag_statussortering
+```
+
+The source fields `from` and `tom` are stored as `fran_datum` and
+`tom_datum` to follow the project's naming conventions.
+
+**`stg.person_uppgift`** — verified fields from `personuppgift.uppgift`,
+following the project's `snake_case` naming conventions:
+
+```text
+kod, uppgift, typ, intressent_id, hangar_id
+```
+
+The live API inspection showed that person details such as residence,
+official email address, telephone number and titles are provided through
+`personuppgift` rather than as direct top-level person fields.
+
+> The member dataset contains person data with nested assignments and person
+> details. Splitting it into `stg.person` (one row per person),
+> `stg.person_uppdrag` (one row per assignment) and `stg.person_uppgift`
+> (one row per person detail) keeps the staging structure aligned with the
+> source while separating the three different row grains.
 
 ### 3.2 Silver — `dw` (all owned by **P3**)
 
@@ -140,6 +167,7 @@ merge conflicts.
 | `sql/00_init.sql` | P6 |
 | `sql/10_stg_person.sql` | P1 |
 | `sql/11_stg_person_uppdrag.sql` | P1 |
+| `sql/12_stg_person_uppgift.sql` | P1 |
 | `sql/20_stg_votering.sql` | P2 |
 | `sql/30_dw_dimensions.sql` | P3 |
 | `sql/31_dw_fakta_rost.sql` | P3 |
@@ -181,7 +209,11 @@ Worth writing down now so nobody debugs them twice.
   scope, but relevant if history is extended.
 - **Multiple votes per point**: `punkt` must be part of the key, or aggregates
   are wrong.
-
+- **Missing assignment container:** `personuppdrag` can be returned as an empty
+  string rather than an object. The extractor handles this as no assignments.
+- **Nested `uppgift` values:** values inside assignment and person-detail records
+  may be wrapped in a list even when only one value is present. The extractor
+  normalises these before loading them into the text-based staging columns.
 ---
 
 ## 7. Local setup
