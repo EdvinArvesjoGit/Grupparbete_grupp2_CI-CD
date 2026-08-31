@@ -12,10 +12,12 @@ VOTING_LIST_URL = "https://data.riksdagen.se/voteringlista/"
 VOTING_DETAIL_URL = "https://data.riksdagen.se/votering/{votering_id}"
 
 RIKSMOTEN = [
-    "2025/26",
-    "2024/25",
-    "2023/24",
-    "2022/23",
+    rm.strip()
+    for rm in os.getenv(
+        "RIKSMOTEN",
+        "2022/23,2023/24,2024/25,2025/26",
+    ).split(",")
+    if rm.strip()
 ]
 
 API_SIZE = 10000
@@ -164,11 +166,11 @@ def get_connection():
     """Create a PostgreSQL database connection."""
 
     return psycopg.connect(
-        host=os.getenv("DB_HOST", "127.0.0.1"),
-        port=os.getenv("DB_PORT", "5432"),
-        dbname=os.getenv("DB_NAME", "riksdag"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
+        host=os.getenv("PGHOST", "localhost"),
+        port=os.getenv("PGPORT", "5432"),
+        dbname=os.getenv("PGDATABASE", "riksdag"),
+        user=os.getenv("PGUSER"),
+        password=os.getenv("PGPASSWORD"),
     )
 
 
