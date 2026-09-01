@@ -21,7 +21,17 @@ RIKSMOTEN = [
 ]
 
 API_SIZE = 10000
-REQUEST_DELAY = 0.05
+REQUEST_DELAY = 0
+
+SESSION = requests.Session()
+
+# "init" loads all configured riksmöten.
+# "incremental" loads only voting events missing from stg.votering.
+INGEST_MODE = os.getenv("INGEST_MODE", "incremental").strip().lower()
+
+# Optional pipeline-level run ID.
+# If CI/CD does not provide KORNING_ID, this remains None and is stored as NULL.
+KORNING_ID = os.getenv("KORNING_ID")
 
 
 def ensure_list(value) -> list:
@@ -38,10 +48,10 @@ def ensure_list(value) -> list:
 
 def fetch_voting_events(rm: str) -> list[dict]:
     """
-    Fetch voting events for one riksmöte.
+    Fetch voting summaries for one riksmöte.
 
     The list endpoint is grouped by votering_id, so each returned item
-    represents one voting event and contains the vote totals for that event.
+    represents one voting event and contains aggregated vote totals.
     """
 
     params = {
@@ -59,6 +69,7 @@ def fetch_voting_events(rm: str) -> list[dict]:
     events = ensure_list(voting_list.get("votering", []))
 
     reported_count = int(voting_list.get("@antal") or 0)
+
     if reported_count and len(events) != reported_count:
         raise ValueError(
             f"Voting event count mismatch for {rm}: "
@@ -84,7 +95,10 @@ def get_expected_count(event: dict) -> int:
     return sum(int(event.get(vote_type) or 0) for vote_type in vote_types)
 
 
-def fetch_votering_xml(votering_id: str) -> tuple[list[dict], str]:
+def fetch_votering_xml(
+    votering_id: str,
+    run_id: str | None = None,
+) -> tuple[list[dict], str]:
     """
     Fetch and parse the XML detail response for one voting event.
 
@@ -129,6 +143,7 @@ def fetch_votering_xml(votering_id: str) -> tuple[list[dict], str]:
                 "datum": vote.findtext("datum"),
                 "systemdatum": vote.findtext("systemdatum"),
                 "_kalla": source_url,
+                "_korning_id": run_id,
             }
         )
 
@@ -175,7 +190,7 @@ def get_connection():
 
 
 def get_existing_votering_ids(conn, rm: str) -> set[str]:
-    """Get voting event IDs already loaded for one riksmöte."""
+    """Get voting event IDs already loaded in the detail table."""
 
     sql = """
         SELECT DISTINCT votering_id::text
@@ -192,9 +207,80 @@ def get_new_voting_events(
     events: list[dict],
     existing_votering_ids: set[str],
 ) -> list[dict]:
-    """Return voting events whose votering_id has not yet been loaded."""
+    """Return voting events whose detail rows have not yet been loaded."""
 
     return [event for event in events if event["votering_id"].lower() not in existing_votering_ids]
+
+
+def upsert_voting_summaries(
+    conn,
+    rm: str,
+    events: list[dict],
+    run_id: str | None = None,
+) -> int:
+    """
+    Store voting summary rows in stg.votering_summary.
+
+    One row represents one voting event. Existing rows are updated so
+    aggregated vote totals can reflect later source corrections.
+    """
+
+    sql = """
+        INSERT INTO stg.votering_summary (
+            votering_id,
+            rm,
+            ja,
+            nej,
+            franvarande,
+            avstar,
+            _kalla,
+            _korning_id
+        )
+        VALUES (
+            %(votering_id)s,
+            %(rm)s,
+            %(ja)s,
+            %(nej)s,
+            %(franvarande)s,
+            %(avstar)s,
+            %(_kalla)s,
+            %(_korning_id)s
+        )
+        ON CONFLICT (votering_id)
+        DO UPDATE SET
+            rm = EXCLUDED.rm,
+            ja = EXCLUDED.ja,
+            nej = EXCLUDED.nej,
+            franvarande = EXCLUDED.franvarande,
+            avstar = EXCLUDED.avstar,
+            _kalla = EXCLUDED._kalla,
+            _korning_id = EXCLUDED._korning_id;
+    """
+
+    rows = [
+        {
+            "votering_id": event["votering_id"],
+            "rm": rm,
+            "ja": int(event.get("Ja") or 0),
+            "nej": int(event.get("Nej") or 0),
+            "franvarande": int(event.get("Frånvarande") or 0),
+            "avstar": int(event.get("Avstår") or 0),
+            "_kalla": VOTING_LIST_URL,
+            "_korning_id": run_id,
+        }
+        for event in events
+    ]
+
+    affected = 0
+
+    with conn.cursor() as cursor:
+        for row in rows:
+            cursor.execute(sql, row)
+            affected += cursor.rowcount
+
+    conn.commit()
+
+    return affected
 
 
 def insert_voteringar(conn, votes: list[dict]) -> int:
@@ -225,7 +311,8 @@ def insert_voteringar(conn, votes: list[dict]) -> int:
             kalla,
             datum,
             systemdatum,
-            _kalla
+            _kalla,
+            _korning_id
         )
         VALUES (
             %(dok_id)s,
@@ -251,7 +338,8 @@ def insert_voteringar(conn, votes: list[dict]) -> int:
             %(kalla)s,
             %(datum)s,
             %(systemdatum)s,
-            %(_kalla)s
+            %(_kalla)s,
+            %(_korning_id)s
         )
         ON CONFLICT (votering_id, intressent_id)
         DO NOTHING;
@@ -269,48 +357,157 @@ def insert_voteringar(conn, votes: list[dict]) -> int:
     return inserted
 
 
+def load_voting_details(
+    conn,
+    events: list[dict],
+    run_id: str | None = None,
+) -> int:
+    """Fetch, validate, and load XML detail rows for voting events."""
+
+    inserted_total = 0
+
+    for index, event in enumerate(events, start=1):
+        votering_id = event["votering_id"]
+        expected_count = get_expected_count(event)
+
+        print(f"[{index}/{len(events)}] Fetching votering_id {votering_id}...")
+
+        votes, _ = fetch_votering_xml(
+            votering_id=votering_id,
+            run_id=run_id,
+        )
+
+        validate_voting_event(
+            votering_id=votering_id,
+            votes=votes,
+            expected_count=expected_count,
+        )
+
+        inserted_total += insert_voteringar(conn, votes)
+        time.sleep(REQUEST_DELAY)
+
+    return inserted_total
+
+
+def initial_load(
+    conn,
+    run_id: str | None = None,
+) -> None:
+    """
+    Initial load for an empty staging area.
+
+    For each configured riksmöte:
+    1. Fetch all voting summaries.
+    2. Store them in stg.votering_summary.
+    3. Fetch XML details for every voting event.
+    4. Store member votes in stg.votering.
+    """
+
+    total_summary_rows = 0
+    total_detail_rows = 0
+
+    print("Starting initial load...")
+
+    for rm in RIKSMOTEN:
+        print(f"\nInitial load for {rm}...")
+
+        events = fetch_voting_events(rm)
+
+        summary_rows = upsert_voting_summaries(
+            conn=conn,
+            rm=rm,
+            events=events,
+            run_id=run_id,
+        )
+        total_summary_rows += summary_rows
+
+        print(f"Stored {len(events)} voting summaries.")
+
+        detail_rows = load_voting_details(
+            conn=conn,
+            events=events,
+            run_id=run_id,
+        )
+        total_detail_rows += detail_rows
+
+        print(f"Finished {rm}: {detail_rows} detail rows inserted.")
+
+    print(
+        f"\nInitial load done. "
+        f"Summary rows inserted/updated: {total_summary_rows}. "
+        f"Detail rows inserted: {total_detail_rows}."
+    )
+
+
+def incremental_load(
+    conn,
+    run_id: str | None = None,
+) -> None:
+    """
+    Incremental load for repeated or scheduled runs.
+
+    For each configured riksmöte:
+    1. Fetch current voting summaries.
+    2. Compare API IDs with IDs already present in stg.votering.
+    3. Upsert summaries into stg.votering_summary.
+    4. Fetch XML details only for missing voting events.
+
+    stg.votering is used as the checkpoint for detail ingestion.
+    """
+
+    total_summary_rows = 0
+    total_detail_rows = 0
+
+    print("Starting incremental load...")
+
+    for rm in RIKSMOTEN:
+        print(f"\nChecking voting events for {rm}...")
+
+        events = fetch_voting_events(rm)
+
+        existing_votering_ids = get_existing_votering_ids(conn, rm)
+        new_events = get_new_voting_events(
+            events,
+            existing_votering_ids,
+        )
+
+        summary_rows = upsert_voting_summaries(
+            conn=conn,
+            rm=rm,
+            events=events,
+            run_id=run_id,
+        )
+        total_summary_rows += summary_rows
+
+        print(f"Stored {len(events)} voting summaries. Found {len(new_events)} new voting events.")
+
+        detail_rows = load_voting_details(
+            conn=conn,
+            events=new_events,
+            run_id=run_id,
+        )
+        total_detail_rows += detail_rows
+
+        print(f"Finished {rm}: {detail_rows} new detail rows inserted.")
+
+    print(
+        f"\nIncremental load done. "
+        f"Summary rows inserted/updated: {total_summary_rows}. "
+        f"New detail rows inserted: {total_detail_rows}."
+    )
+
+
 def main():
+    if INGEST_MODE not in {"init", "incremental"}:
+        raise ValueError(f"Invalid INGEST_MODE={INGEST_MODE!r}. Use 'init' or 'incremental'.")
+
     conn = get_connection()
 
     try:
-        total_inserted = 0
-
-        for rm in RIKSMOTEN:
-            print(f"\nChecking voting events for {rm}...")
-
-            events = fetch_voting_events(rm)
-            existing_votering_ids = get_existing_votering_ids(conn, rm)
-            new_events = get_new_voting_events(events, existing_votering_ids)
-
-            print(f"Found {len(events)} voting events, {len(new_events)} new.")
-
-            rm_inserted = 0
-
-            for index, event in enumerate(new_events, start=1):
-                votering_id = event["votering_id"]
-                expected_count = get_expected_count(event)
-
-                print(f"[{index}/{len(new_events)}] Fetching votering_id {votering_id}...")
-
-                votes, _ = fetch_votering_xml(votering_id)
-
-                validate_voting_event(
-                    votering_id=votering_id,
-                    votes=votes,
-                    expected_count=expected_count,
-                )
-
-                inserted = insert_voteringar(conn, votes)
-
-                rm_inserted += inserted
-                total_inserted += inserted
-
-                time.sleep(REQUEST_DELAY)
-
-            print(f"Finished {rm}: {rm_inserted} new rows inserted.")
-
-        print(f"\nDone. Total new rows inserted: {total_inserted}")
-
+        if INGEST_MODE == "init":
+            initial_load(conn, KORNING_ID)
+        else:
+            incremental_load(conn, KORNING_ID)
     finally:
         conn.close()
 
