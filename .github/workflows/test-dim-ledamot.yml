@@ -1,0 +1,33 @@
+name: Test - dim_ledamot (P3)   
+
+on:
+  push:
+    paths:
+      - 'src/transform/dim_ledamot.py'
+      - 'tests/test_dim_ledamot.py'
+      - 'requirements.txt'
+      - 'requirements-dev.txt'
+  pull_request:
+    paths:
+      - 'src/transform/dim_ledamot.py'
+      - 'tests/test_dim_ledamot.py'
+      - 'requirements.txt'
+      - 'requirements-dev.txt'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installera beroenden
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Kör tester
+        run: pytest tests/test_dim_ledamot.py -v
