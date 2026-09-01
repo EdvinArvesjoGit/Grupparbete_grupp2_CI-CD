@@ -6,7 +6,9 @@ Reads from stg.person (P1's raw data) and writes to dw.dim_ledamot.
 """
 
 from datetime import date
+
 from sqlalchemy import text
+
 from src.common.db import get_engine
 
 
