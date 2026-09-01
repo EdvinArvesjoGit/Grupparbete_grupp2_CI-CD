@@ -22,7 +22,6 @@ def load_dim_ledamot():
     # engine.begin() opens a transaction: if the whole block succeeds it is
     # committed automatically at the end; if anything raises, it rolls back.
     with engine.begin() as conn:
-
         # Fetch all people from the raw data, once.
         # .mappings() makes each row behave like a dict (person["parti"])
         # instead of an anonymous tuple.
@@ -36,14 +35,18 @@ def load_dim_ledamot():
 
             # Does an ACTIVE version of this person already exist in
             # dim_ledamot? (ar_aktuell = true means "current version")
-            befintlig = conn.execute(
-                text("""
+            befintlig = (
+                conn.execute(
+                    text("""
                     SELECT * FROM dw.dim_ledamot
                     WHERE intressent_id = :intressent_id
                     AND ar_aktuell = true
                 """),
-                {"intressent_id": person["intressent_id"]}
-            ).mappings().first()
+                    {"intressent_id": person["intressent_id"]},
+                )
+                .mappings()
+                .first()
+            )
 
             if befintlig is None:
                 # Case 1: brand new person, never existed in dim_ledamot.
@@ -108,10 +111,7 @@ def _har_andrats(befintlig, ny):
     Note: fornamn/efternamn are NOT compared here — a spelling fix
     would not trigger a new history row with this logic.
     """
-    return (
-        befintlig["parti"] != ny["parti"]
-        or befintlig["valkrets"] != ny["valkrets"]
-    )
+    return befintlig["parti"] != ny["parti"] or befintlig["valkrets"] != ny["valkrets"]
 
 
 def _stang_gammal_version(conn, ledamot_nyckel):
@@ -128,7 +128,7 @@ def _stang_gammal_version(conn, ledamot_nyckel):
             SET giltig_till = :idag, ar_aktuell = false
             WHERE ledamot_nyckel = :ledamot_nyckel
         """),
-        {"idag": date.today(), "ledamot_nyckel": ledamot_nyckel}
+        {"idag": date.today(), "ledamot_nyckel": ledamot_nyckel},
     )
 
 
@@ -155,5 +155,5 @@ def _infoga_ny_version(conn, person):
             "fodd_ar": person["fodd_ar"],
             "valkrets": person["valkrets"],
             "idag": date.today(),
-        }
+        },
     )
