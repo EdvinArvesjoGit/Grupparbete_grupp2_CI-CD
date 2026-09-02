@@ -97,28 +97,19 @@ def test_get_new_voting_events_when_all_exist():
     assert get_new_voting_events(events, existing_votering_ids) == []
 
 
-class FakeCursor:
-    def __init__(self):
-        self.executed_rows = []
-        self.rowcount = 1
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        return False
-
-    def execute(self, sql, params):
-        self.executed_rows.append(params)
+class FakeResult:
+    def __init__(self, rowcount=1):
+        self.rowcount = rowcount
 
 
 class FakeConnection:
     def __init__(self):
-        self.fake_cursor = FakeCursor()
+        self.executed_rows = []
         self.committed = False
 
-    def cursor(self):
-        return self.fake_cursor
+    def execute(self, sql, params):
+        self.executed_rows.append(params)
+        return FakeResult()
 
     def commit(self):
         self.committed = True
@@ -154,7 +145,7 @@ def test_upsert_voting_summaries():
     assert result == 2
     assert conn.committed is True
 
-    assert conn.fake_cursor.executed_rows[0] == {
+    assert conn.executed_rows[0] == {
         "votering_id": "00178723-112D-4742-8BE9-B606161A44DF",
         "rm": "2025/26",
         "ja": 264,

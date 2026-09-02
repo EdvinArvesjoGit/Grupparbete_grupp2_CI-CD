@@ -2,11 +2,10 @@ import os
 import time
 import xml.etree.ElementTree as ET
 
-import psycopg
 import requests
-from dotenv import load_dotenv
+from sqlalchemy import text
 
-load_dotenv()
+from src.common.db import get_engine
 
 VOTING_LIST_URL = "https://data.riksdagen.se/voteringlista/"
 VOTING_DETAIL_URL = "https://data.riksdagen.se/votering/{votering_id}"
@@ -177,30 +176,17 @@ def validate_voting_event(
         )
 
 
-def get_connection():
-    """Create a PostgreSQL database connection."""
-
-    return psycopg.connect(
-        host=os.getenv("PGHOST", "localhost"),
-        port=os.getenv("PGPORT", "5432"),
-        dbname=os.getenv("PGDATABASE", "riksdag"),
-        user=os.getenv("PGUSER"),
-        password=os.getenv("PGPASSWORD"),
-    )
-
-
 def get_existing_votering_ids(conn, rm: str) -> set[str]:
     """Get voting event IDs already loaded in the detail table."""
 
     sql = """
         SELECT DISTINCT votering_id::text
         FROM stg.votering
-        WHERE rm = %s;
+        WHERE rm = :rm;
     """
 
-    with conn.cursor() as cursor:
-        cursor.execute(sql, (rm,))
-        return {row[0].lower() for row in cursor.fetchall()}
+    result = conn.execute(text(sql), {"rm": rm})
+    return {row[0].lower() for row in result.fetchall()}
 
 
 def get_new_voting_events(
@@ -237,14 +223,14 @@ def upsert_voting_summaries(
             _korning_id
         )
         VALUES (
-            %(votering_id)s,
-            %(rm)s,
-            %(ja)s,
-            %(nej)s,
-            %(franvarande)s,
-            %(avstar)s,
-            %(_kalla)s,
-            %(_korning_id)s
+            :votering_id,
+            :rm,
+            :ja,
+            :nej,
+            :franvarande,
+            :avstar,
+            :_kalla,
+            :_korning_id
         )
         ON CONFLICT (votering_id)
         DO UPDATE SET
@@ -273,10 +259,10 @@ def upsert_voting_summaries(
 
     affected = 0
 
-    with conn.cursor() as cursor:
-        for row in rows:
-            cursor.execute(sql, row)
-            affected += cursor.rowcount
+    statement = text(sql)
+    for row in rows:
+        result = conn.execute(statement, row)
+        affected += result.rowcount
 
     conn.commit()
 
@@ -315,31 +301,31 @@ def insert_voteringar(conn, votes: list[dict]) -> int:
             _korning_id
         )
         VALUES (
-            %(dok_id)s,
-            %(votering_id)s,
-            %(punkt)s,
-            %(punkttyp)s,
-            %(namn)s,
-            %(intressent_id)s,
-            %(parti)s,
-            %(valkrets)s,
-            %(valkretsnummer)s,
-            %(iort)s,
-            %(rost)s,
-            %(avser)s,
-            %(votering)s,
-            %(banknummer)s,
-            %(fornamn)s,
-            %(efternamn)s,
-            %(kon)s,
-            %(fodd)s,
-            %(rm)s,
-            %(beteckning)s,
-            %(kalla)s,
-            %(datum)s,
-            %(systemdatum)s,
-            %(_kalla)s,
-            %(_korning_id)s
+            :dok_id,
+            :votering_id,
+            :punkt,
+            :punkttyp,
+            :namn,
+            :intressent_id,
+            :parti,
+            :valkrets,
+            :valkretsnummer,
+            :iort,
+            :rost,
+            :avser,
+            :votering,
+            :banknummer,
+            :fornamn,
+            :efternamn,
+            :kon,
+            :fodd,
+            :rm,
+            :beteckning,
+            :kalla,
+            :datum,
+            :systemdatum,
+            :_kalla,
+            :_korning_id
         )
         ON CONFLICT (votering_id, intressent_id)
         DO NOTHING;
@@ -347,10 +333,10 @@ def insert_voteringar(conn, votes: list[dict]) -> int:
 
     inserted = 0
 
-    with conn.cursor() as cursor:
-        for vote in votes:
-            cursor.execute(sql, vote)
-            inserted += cursor.rowcount
+    statement = text(sql)
+    for vote in votes:
+        result = conn.execute(statement, vote)
+        inserted += result.rowcount
 
     conn.commit()
 
@@ -501,15 +487,12 @@ def main():
     if INGEST_MODE not in {"init", "incremental"}:
         raise ValueError(f"Invalid INGEST_MODE={INGEST_MODE!r}. Use 'init' or 'incremental'.")
 
-    conn = get_connection()
-
-    try:
+    # Each summary batch and voting event commits separately in the loaders.
+    with get_engine().connect() as conn:
         if INGEST_MODE == "init":
             initial_load(conn, KORNING_ID)
         else:
             incremental_load(conn, KORNING_ID)
-    finally:
-        conn.close()
 
 
 if __name__ == "__main__":
