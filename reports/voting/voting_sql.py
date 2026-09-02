@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from sqlalchemy import text
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.common.db import get_engine
+
+
+from sqlalchemy import text
+
 
 
 FILTER_OPTIONS_SQL = text(
