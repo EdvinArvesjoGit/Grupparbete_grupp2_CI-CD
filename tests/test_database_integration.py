@@ -17,6 +17,8 @@ P3's transform passes.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from sqlalchemy import inspect, text
 
@@ -27,8 +29,21 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture(scope="module")
 def engine():
+    """Return an engine, or skip locally / fail in CI when there is no database.
+
+    Skipping is right on a laptop with no Postgres running. It is WRONG in CI:
+    pytest exits 0 when every test skips, so a misconfigured service container
+    produces a green build that tested nothing. GitHub Actions always sets
+    CI=true, so there we turn the skip into a hard failure.
+    """
     if not check_connection():
-        pytest.skip("no database reachable — set DATABASE_URL to run integration tests")
+        if os.environ.get("CI"):
+            pytest.fail(
+                "no database reachable in CI. The integration job must set "
+                "PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD to match the "
+                "postgres service container — these are what config.py reads."
+            )
+        pytest.skip("no database reachable locally — start Postgres to run these")
     return get_engine()
 
 
@@ -121,6 +136,31 @@ def test_log_step_records_failure_and_reraises(engine) -> None:
         conn.execute(text("DELETE FROM ops.load_log WHERE korning_id = 'pytest-fail'"))
 
 
+EXPECTED_TABLES = {
+    "stg": ("person", "person_uppdrag", "votering"),
+    "dw": ("dim_ledamot",),
+}
+
+
+def test_expected_tables_exist(engine) -> None:
+    """The committed DDL must actually create the tables we claim to test.
+
+    Without this, every schema assertion below can pass vacuously: a test that
+    iterates over tables finds nothing to complain about when the tables are
+    missing, and reports success. A green build over an empty database is
+    worse than a red one, because it manufactures confidence.
+    """
+    insp = inspect(engine)
+    missing = []
+    for schema, tables in EXPECTED_TABLES.items():
+        present = set(insp.get_table_names(schema=schema))
+        missing += [f"{schema}.{t}" for t in tables if t not in present]
+
+    assert not missing, (
+        "tables missing from the database — did the DDL in sql/ actually run? " + ", ".join(missing)
+    )
+
+
 def test_stg_columns_are_wide_enough(engine) -> None:
     """Guard against the varchar(10) class of bug.
 
@@ -131,6 +171,7 @@ def test_stg_columns_are_wide_enough(engine) -> None:
     minimum_widths = {"intressent_id": 13, "valkrets": 25}
     insp = inspect(engine)
     problems = []
+    checked = 0
 
     for schema in ("stg", "dw"):
         for table in insp.get_table_names(schema=schema):
@@ -138,10 +179,15 @@ def test_stg_columns_are_wide_enough(engine) -> None:
                 needed = minimum_widths.get(col["name"])
                 if needed is None:
                     continue
+                checked += 1
                 length = getattr(col["type"], "length", None)
                 if length is not None and length < needed:
                     problems.append(
                         f"{schema}.{table}.{col['name']} is varchar({length}), needs >= {needed}"
                     )
 
+    assert checked > 0, (
+        "no intressent_id or valkrets columns found anywhere in stg/dw — "
+        "this test would have passed vacuously. Check that sql/ DDL ran."
+    )
     assert not problems, "columns too narrow: " + "; ".join(problems)

@@ -45,8 +45,14 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+    # These are what src/common/config.py actually reads. Setting DATABASE_URL
+    # here would do nothing, because config.py builds the URL from PG* vars.
     env:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/riksdag_test
+      PGHOST: localhost
+      PGPORT: 5432
+      PGDATABASE: riksdag_test
+      PGUSER: postgres
+      PGPASSWORD: postgres
 
     steps:
       - uses: actions/checkout@v4
