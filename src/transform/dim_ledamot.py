@@ -11,6 +11,8 @@ from sqlalchemy import text
 
 from src.common.db import get_engine
 
+SCOPE_START = date(2022, 9, 1)
+
 
 def load_dim_ledamot():
     """
@@ -19,22 +21,22 @@ def load_dim_ledamot():
     """
     engine = get_engine()
 
-    # engine.begin() opens a transaction: if the whole block succeeds it is
-    # committed automatically at the end; if anything raises, it rolls back.
     with engine.begin() as conn:
-        # Fetch all people from the raw data, once.
-        # .mappings() makes each row behave like a dict (person["parti"])
-        # instead of an anonymous tuple.
+        # NEW: only process people whose uppdrag overlaps our project scope
+        relevanta_id = _hamta_relevanta_id(conn)
+
         stg_personer = conn.execute(text("SELECT * FROM stg.person")).mappings().all()
 
         for raw_person in stg_personer:
-            # Clean and validate BEFORE comparing or inserting anything.
-            # This is the step that was previously missing — _rensa_person
-            # existed but was never actually called.
-            person = _rensa_person(raw_person)
+            # NEW: skip anyone outside scope before doing any other work
+            if raw_person["intressent_id"] not in relevanta_id:
+                continue
 
-            # Does an ACTIVE version of this person already exist in
-            # dim_ledamot? (ar_aktuell = true means "current version")
+            person = _rensa_person(raw_person)
+            if person is None:
+                # Known case: person missing intressent_id, not usable for SCD-2
+                continue
+
             befintlig = (
                 conn.execute(
                     text("""
@@ -49,19 +51,32 @@ def load_dim_ledamot():
             )
 
             if befintlig is None:
-                # Case 1: brand new person, never existed in dim_ledamot.
-                # Insert the first version of them.
                 _infoga_ny_version(conn, person)
-
             elif _har_andrats(befintlig, person):
-                # Case 2: person already exists, but something meaningful
-                # (party, constituency) has changed since last run.
-                # Close the old row and insert a new one.
                 _stang_gammal_version(conn, befintlig["ledamot_nyckel"])
                 _infoga_ny_version(conn, person)
 
-            # Case 3 (otherwise): nothing changed, do nothing. Loop continues.
+def _hamta_relevanta_id(conn):
+    """
+    Returns the set of intressent_id for people who have at least one uppdrag(mission)
+    overlapping the project scope (riksmöte 2022/2023 onwards).
 
+    tom_datum is stored as TEXT in stg (per the "no type cleverness in staging" rule),
+    so we cast it explicity here in transform step. NULLIF(tom_datum, '')
+    treats an empty string the same as NULL
+    both mean "no end date set", i.e. the uppdrag is still ongoing.
+    """
+    rader = conn.execute(
+        text("""
+            SELECT DISTINCT intressent_id
+            FROM stg.person_uppdrag
+            WHERE NULLIF(tom_datum, '') IS NULL
+                OR NULLIF(tom_datum, '')::timestamptz >= :scope_start
+        """),
+        {"scope_start": SCOPE_START}
+    ).mappings().all()
+
+    return {rad["intressent_id"] for rad in rader}
 
 def _rensa_person(person):
     """
@@ -73,14 +88,14 @@ def _rensa_person(person):
     """
     intressent_id = person.get("intressent_id")
     if not intressent_id:
-        raise ValueError(f"Person is missing intressent_id: {person}")
+        return None
 
     parti_ra = (person.get("parti") or "").strip()
     if parti_ra in ("", "-"):
         parti = "Partilös"
     else:
         parti = parti_ra
-
+    # stg.person uses the source field name 'tilltalsnamn'; we rename it to 'fornamn' here per dw naming convention
     return {
         "intressent_id": intressent_id.strip(),
         "fornamn": (person.get("tilltalsnamn") or "").strip(),
@@ -89,7 +104,6 @@ def _rensa_person(person):
         "fodd_ar": _sakert_heltal(person.get("fodd_ar")),
         "valkrets": (person.get("valkrets") or "Okänd").strip(),
     }
-
 
 def _sakert_heltal(varde):
     """
@@ -102,7 +116,6 @@ def _sakert_heltal(varde):
     except (ValueError, TypeError):
         return None
 
-
 def _har_andrats(befintlig, ny):
     """
     Decides whether a new SCD-2 version is needed.
@@ -112,7 +125,6 @@ def _har_andrats(befintlig, ny):
     would not trigger a new history row with this logic.
     """
     return befintlig["parti"] != ny["parti"] or befintlig["valkrets"] != ny["valkrets"]
-
 
 def _stang_gammal_version(conn, ledamot_nyckel):
     """
@@ -130,7 +142,6 @@ def _stang_gammal_version(conn, ledamot_nyckel):
         """),
         {"idag": date.today(), "ledamot_nyckel": ledamot_nyckel},
     )
-
 
 def _infoga_ny_version(conn, person):
     """
