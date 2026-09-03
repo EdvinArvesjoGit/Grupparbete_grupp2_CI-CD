@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS dw.dim_ledamot (
     ledamot_nyckel      SERIAL PRIMARY KEY,
-    intressent_id       VARCHAR(10) NOT NULL,
+    intressent_id       VARCHAR(13) NOT NULL,
     fornamn             VARCHAR(100) NOT NULL,
     efternamn           VARCHAR(100) NOT NULL,
     parti               VARCHAR(10),
