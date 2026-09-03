@@ -8,9 +8,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.common.db import get_engine
 
-
 from sqlalchemy import text
-
 
 
 FILTER_OPTIONS_SQL = text(
