@@ -3,9 +3,10 @@ import time
 import xml.etree.ElementTree as ET
 
 import requests
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 
 from src.common.db import get_engine
+from src.common.pipeline import log_step, new_korning_id
 
 VOTING_LIST_URL = "https://data.riksdagen.se/voteringlista/"
 VOTING_DETAIL_URL = "https://data.riksdagen.se/votering/{votering_id}"
@@ -23,14 +24,6 @@ API_SIZE = 10000
 REQUEST_DELAY = 0
 
 SESSION = requests.Session()
-
-# "init" loads all configured riksmöten.
-# "incremental" loads only voting events missing from stg.votering.
-INGEST_MODE = os.getenv("INGEST_MODE", "incremental").strip().lower()
-
-# Optional pipeline-level run ID.
-# If CI/CD does not provide KORNING_ID, this remains None and is stored as NULL.
-KORNING_ID = os.getenv("KORNING_ID")
 
 
 def ensure_list(value) -> list:
@@ -378,7 +371,7 @@ def load_voting_details(
 def initial_load(
     conn,
     run_id: str | None = None,
-) -> None:
+) -> int:
     """
     Initial load for an empty staging area.
 
@@ -424,11 +417,13 @@ def initial_load(
         f"Detail rows inserted: {total_detail_rows}."
     )
 
+    return total_detail_rows
+
 
 def incremental_load(
     conn,
     run_id: str | None = None,
-) -> None:
+) -> int:
     """
     Incremental load for repeated or scheduled runs.
 
@@ -482,17 +477,50 @@ def incremental_load(
         f"New detail rows inserted: {total_detail_rows}."
     )
 
+    return total_detail_rows
 
-def main():
-    if INGEST_MODE not in {"init", "incremental"}:
-        raise ValueError(f"Invalid INGEST_MODE={INGEST_MODE!r}. Use 'init' or 'incremental'.")
 
-    # Each summary batch and voting event commits separately in the loaders.
-    with get_engine().connect() as conn:
-        if INGEST_MODE == "init":
-            initial_load(conn, KORNING_ID)
-        else:
-            incremental_load(conn, KORNING_ID)
+def run(
+    engine: Engine,
+    korning_id: str | None = None,
+    mode: str = "incremental",
+) -> int:
+    """Load votes with a shared run ID and return newly inserted detail rows.
+
+    The same ID is written to summaries, new detail rows, and ops.load_log.
+    The log row covers this ingest step; antal_rader counts detail inserts only.
+    """
+    if mode not in {"init", "incremental"}:
+        raise ValueError(f"Invalid mode={mode!r}. Use 'init' or 'incremental'.")
+
+    if korning_id is None:
+        korning_id = new_korning_id()
+
+    with log_step(
+        engine,
+        kalla="voteringar",
+        mallager="stg",
+        malltabell="votering",
+        korning_id=korning_id,
+    ) as step:
+        # Each summary batch and voting event commits separately in the loaders.
+        with engine.connect() as conn:
+            if mode == "init":
+                rows = initial_load(conn, run_id=korning_id)
+            else:
+                rows = incremental_load(conn, run_id=korning_id)
+
+        step.antal_rader = rows
+        return rows
+
+
+def main() -> int:
+    """Support standalone execution with the same loading and logging logic."""
+    return run(
+        get_engine(),
+        korning_id=os.getenv("KORNING_ID") or None,
+        mode=os.getenv("INGEST_MODE", "incremental").strip().lower(),
+    )
 
 
 if __name__ == "__main__":
