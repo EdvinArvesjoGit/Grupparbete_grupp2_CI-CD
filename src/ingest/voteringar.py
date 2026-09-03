@@ -368,64 +368,12 @@ def load_voting_details(
     return inserted_total
 
 
-def initial_load(
-    conn,
-    run_id: str | None = None,
-) -> int:
-    """
-    Initial load for an empty staging area.
-
-    For each configured riksmöte:
-    1. Fetch all voting summaries.
-    2. Store them in stg.votering_summary.
-    3. Fetch XML details for every voting event.
-    4. Store member votes in stg.votering.
-    """
-
-    total_summary_rows = 0
-    total_detail_rows = 0
-
-    print("Starting initial load...")
-
-    for rm in RIKSMOTEN:
-        print(f"\nInitial load for {rm}...")
-
-        events = fetch_voting_events(rm)
-
-        summary_rows = upsert_voting_summaries(
-            conn=conn,
-            rm=rm,
-            events=events,
-            run_id=run_id,
-        )
-        total_summary_rows += summary_rows
-
-        print(f"Stored {len(events)} voting summaries.")
-
-        detail_rows = load_voting_details(
-            conn=conn,
-            events=events,
-            run_id=run_id,
-        )
-        total_detail_rows += detail_rows
-
-        print(f"Finished {rm}: {detail_rows} detail rows inserted.")
-
-    print(
-        f"\nInitial load done. "
-        f"Summary rows inserted/updated: {total_summary_rows}. "
-        f"Detail rows inserted: {total_detail_rows}."
-    )
-
-    return total_detail_rows
-
-
 def incremental_load(
     conn,
     run_id: str | None = None,
 ) -> int:
     """
-    Incremental load for repeated or scheduled runs.
+    Load all events on an empty detail table, then only missing events on later runs.
 
     For each configured riksmöte:
     1. Fetch current voting summaries.
@@ -434,6 +382,7 @@ def incremental_load(
     4. Fetch XML details only for missing voting events.
 
     stg.votering is used as the checkpoint for detail ingestion.
+    Tables must already exist. Completed events are skipped when a run is resumed.
     """
 
     total_summary_rows = 0
@@ -483,16 +432,14 @@ def incremental_load(
 def run(
     engine: Engine,
     korning_id: str | None = None,
-    mode: str = "incremental",
 ) -> int:
     """Load votes with a shared run ID and return newly inserted detail rows.
 
+    Uses incremental loading for both first and subsequent runs.
+    An empty detail table makes every source event eligible for loading.
     The same ID is written to summaries, new detail rows, and ops.load_log.
     The log row covers this ingest step; antal_rader counts detail inserts only.
     """
-    if mode not in {"init", "incremental"}:
-        raise ValueError(f"Invalid mode={mode!r}. Use 'init' or 'incremental'.")
-
     if korning_id is None:
         korning_id = new_korning_id()
 
@@ -505,10 +452,7 @@ def run(
     ) as step:
         # Each summary batch and voting event commits separately in the loaders.
         with engine.connect() as conn:
-            if mode == "init":
-                rows = initial_load(conn, run_id=korning_id)
-            else:
-                rows = incremental_load(conn, run_id=korning_id)
+            rows = incremental_load(conn, run_id=korning_id)
 
         step.antal_rader = rows
         return rows
@@ -519,7 +463,6 @@ def main() -> int:
     return run(
         get_engine(),
         korning_id=os.getenv("KORNING_ID") or None,
-        mode=os.getenv("INGEST_MODE", "incremental").strip().lower(),
     )
 
 
