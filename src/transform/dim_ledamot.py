@@ -22,19 +22,31 @@ def load_dim_ledamot():
     engine = get_engine()
 
     with engine.begin() as conn:
-        # NEW: only process people whose uppdrag overlaps our project scope
         relevanta_id = _hamta_relevanta_id(conn)
+        stg_personer = (
+            conn.execute(
+                text("""
+                    SELECT DISTINCT ON (intressent_id) *
+                    FROM stg.person
+                    ORDER BY intressent_id, (valkrets is NULL OR valkrets = '') ASC, _laddad_tidpunkt DESC
+                """)  # noqa: E501
+            )
+            .mappings()
+            .all()
+        )
 
-        stg_personer = conn.execute(text("SELECT * FROM stg.person")).mappings().all()
+        antal_nya = 0
+        antal_uppdaterade = 0
+        antal_overhoppade = 0
 
         for raw_person in stg_personer:
-            # NEW: skip anyone outside scope before doing any other work
             if raw_person["intressent_id"] not in relevanta_id:
+                antal_overhoppade += 1
                 continue
 
             person = _rensa_person(raw_person)
             if person is None:
-                # Known case: person missing intressent_id, not usable for SCD-2
+                antal_overhoppade += 1
                 continue
 
             befintlig = (
@@ -52,9 +64,15 @@ def load_dim_ledamot():
 
             if befintlig is None:
                 _infoga_ny_version(conn, person)
+                antal_nya += 1
             elif _har_andrats(befintlig, person):
                 _stang_gammal_version(conn, befintlig["ledamot_nyckel"])
                 _infoga_ny_version(conn, person)
+                antal_uppdaterade += 1
+
+    print(f"Nya personer tillagda: {antal_nya}")
+    print(f"Befintliga personer uppdaterade (SCD-2): {antal_uppdaterade}")
+    print(f"Överhoppade (utanför scope eller saknar id): {antal_overhoppade}")
 
 
 def _hamta_relevanta_id(conn):
@@ -179,3 +197,7 @@ def _infoga_ny_version(conn, person):
             "idag": date.today(),
         },
     )
+
+
+if __name__ == "__main__":
+    load_dim_ledamot()
