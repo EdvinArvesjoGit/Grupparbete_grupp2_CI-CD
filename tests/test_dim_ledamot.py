@@ -8,18 +8,15 @@ def test_har_andrats_inget_andrat():
     ny = {"parti": "S", "valkrets": "Stockholms kommun"}
     assert _har_andrats(befintlig, ny) is False
 
-
 def test_har_andrats_parti_andrat():
     befintlig = {"parti": "S", "valkrets": "Stockholms kommun"}
     ny = {"parti": "C", "valkrets": "Stockholms kommun"}
     assert _har_andrats(befintlig, ny) is True
 
-
 def test_har_andrats_valkrets_andrat():
     befintlig = {"parti": "S", "valkrets": "Stockholms kommun"}
     ny = {"parti": "S", "valkrets": "Stockholms län"}
     assert _har_andrats(befintlig, ny) is True
-
 
 def test_rensa_person_saknar_id_ger_none():
     person = {"intressent_id": "", "tilltalsnamn": "Anna"}
@@ -38,14 +35,11 @@ def test_rensa_person_trimmar_mellanslag():
     assert resultat["intressent_id"] == "0001"
     assert resultat["fornamn"] == "Anna"
 
-
 def test_sakert_heltal_giltig_sträng():
     assert _sakert_heltal("1975") == 1975
 
-
 def test_sakert_heltal_tom_sträng_ger_none():
     assert _sakert_heltal("") is None
-
 
 def test_sakert_heltal_none_ger_none():
     assert _sakert_heltal(None) is None
