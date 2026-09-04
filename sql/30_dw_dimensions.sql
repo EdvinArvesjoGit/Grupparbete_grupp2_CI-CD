@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS dw.dim_ledamot (
 CREATE TABLE IF NOT EXISTS dw.dim_parti (
     parti_nyckel    SERIAL PRIMARY KEY,
     partikod        VARCHAR(10) NOT NULL UNIQUE,  -- for example 'S', 'M', 'C'
-    partinamn       VARCHAR(100)
+    partinamn       VARCHAR(100),
+    mandat_2022     INTEGER
 );
 
 -- One row per unique  voting round
@@ -50,3 +51,4 @@ CREATE TABLE IF NOT EXISTS dw.dim_datum (
     dag             INTEGER NOT NULL,
     veckodag        VARCHAR(20) NOT NULL
 );
+
