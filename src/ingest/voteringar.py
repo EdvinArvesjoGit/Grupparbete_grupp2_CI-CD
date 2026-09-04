@@ -2,11 +2,11 @@ import os
 import time
 import xml.etree.ElementTree as ET
 
-import psycopg
 import requests
-from dotenv import load_dotenv
+from sqlalchemy import Engine, text
 
-load_dotenv()
+from src.common.db import get_engine
+from src.common.pipeline import log_step, new_korning_id
 
 VOTING_LIST_URL = "https://data.riksdagen.se/voteringlista/"
 VOTING_DETAIL_URL = "https://data.riksdagen.se/votering/{votering_id}"
@@ -24,14 +24,6 @@ API_SIZE = 10000
 REQUEST_DELAY = 0
 
 SESSION = requests.Session()
-
-# "init" loads all configured riksmöten.
-# "incremental" loads only voting events missing from stg.votering.
-INGEST_MODE = os.getenv("INGEST_MODE", "incremental").strip().lower()
-
-# Optional pipeline-level run ID.
-# If CI/CD does not provide KORNING_ID, this remains None and is stored as NULL.
-KORNING_ID = os.getenv("KORNING_ID")
 
 
 def ensure_list(value) -> list:
@@ -177,30 +169,17 @@ def validate_voting_event(
         )
 
 
-def get_connection():
-    """Create a PostgreSQL database connection."""
-
-    return psycopg.connect(
-        host=os.getenv("PGHOST", "localhost"),
-        port=os.getenv("PGPORT", "5432"),
-        dbname=os.getenv("PGDATABASE", "riksdag"),
-        user=os.getenv("PGUSER"),
-        password=os.getenv("PGPASSWORD"),
-    )
-
-
 def get_existing_votering_ids(conn, rm: str) -> set[str]:
     """Get voting event IDs already loaded in the detail table."""
 
     sql = """
         SELECT DISTINCT votering_id::text
         FROM stg.votering
-        WHERE rm = %s;
+        WHERE rm = :rm;
     """
 
-    with conn.cursor() as cursor:
-        cursor.execute(sql, (rm,))
-        return {row[0].lower() for row in cursor.fetchall()}
+    result = conn.execute(text(sql), {"rm": rm})
+    return {row[0].lower() for row in result.fetchall()}
 
 
 def get_new_voting_events(
@@ -237,14 +216,14 @@ def upsert_voting_summaries(
             _korning_id
         )
         VALUES (
-            %(votering_id)s,
-            %(rm)s,
-            %(ja)s,
-            %(nej)s,
-            %(franvarande)s,
-            %(avstar)s,
-            %(_kalla)s,
-            %(_korning_id)s
+            :votering_id,
+            :rm,
+            :ja,
+            :nej,
+            :franvarande,
+            :avstar,
+            :_kalla,
+            :_korning_id
         )
         ON CONFLICT (votering_id)
         DO UPDATE SET
@@ -273,10 +252,10 @@ def upsert_voting_summaries(
 
     affected = 0
 
-    with conn.cursor() as cursor:
-        for row in rows:
-            cursor.execute(sql, row)
-            affected += cursor.rowcount
+    statement = text(sql)
+    for row in rows:
+        result = conn.execute(statement, row)
+        affected += result.rowcount
 
     conn.commit()
 
@@ -315,31 +294,31 @@ def insert_voteringar(conn, votes: list[dict]) -> int:
             _korning_id
         )
         VALUES (
-            %(dok_id)s,
-            %(votering_id)s,
-            %(punkt)s,
-            %(punkttyp)s,
-            %(namn)s,
-            %(intressent_id)s,
-            %(parti)s,
-            %(valkrets)s,
-            %(valkretsnummer)s,
-            %(iort)s,
-            %(rost)s,
-            %(avser)s,
-            %(votering)s,
-            %(banknummer)s,
-            %(fornamn)s,
-            %(efternamn)s,
-            %(kon)s,
-            %(fodd)s,
-            %(rm)s,
-            %(beteckning)s,
-            %(kalla)s,
-            %(datum)s,
-            %(systemdatum)s,
-            %(_kalla)s,
-            %(_korning_id)s
+            :dok_id,
+            :votering_id,
+            :punkt,
+            :punkttyp,
+            :namn,
+            :intressent_id,
+            :parti,
+            :valkrets,
+            :valkretsnummer,
+            :iort,
+            :rost,
+            :avser,
+            :votering,
+            :banknummer,
+            :fornamn,
+            :efternamn,
+            :kon,
+            :fodd,
+            :rm,
+            :beteckning,
+            :kalla,
+            :datum,
+            :systemdatum,
+            :_kalla,
+            :_korning_id
         )
         ON CONFLICT (votering_id, intressent_id)
         DO NOTHING;
@@ -347,10 +326,10 @@ def insert_voteringar(conn, votes: list[dict]) -> int:
 
     inserted = 0
 
-    with conn.cursor() as cursor:
-        for vote in votes:
-            cursor.execute(sql, vote)
-            inserted += cursor.rowcount
+    statement = text(sql)
+    for vote in votes:
+        result = conn.execute(statement, vote)
+        inserted += result.rowcount
 
     conn.commit()
 
@@ -389,62 +368,12 @@ def load_voting_details(
     return inserted_total
 
 
-def initial_load(
-    conn,
-    run_id: str | None = None,
-) -> None:
-    """
-    Initial load for an empty staging area.
-
-    For each configured riksmöte:
-    1. Fetch all voting summaries.
-    2. Store them in stg.votering_summary.
-    3. Fetch XML details for every voting event.
-    4. Store member votes in stg.votering.
-    """
-
-    total_summary_rows = 0
-    total_detail_rows = 0
-
-    print("Starting initial load...")
-
-    for rm in RIKSMOTEN:
-        print(f"\nInitial load for {rm}...")
-
-        events = fetch_voting_events(rm)
-
-        summary_rows = upsert_voting_summaries(
-            conn=conn,
-            rm=rm,
-            events=events,
-            run_id=run_id,
-        )
-        total_summary_rows += summary_rows
-
-        print(f"Stored {len(events)} voting summaries.")
-
-        detail_rows = load_voting_details(
-            conn=conn,
-            events=events,
-            run_id=run_id,
-        )
-        total_detail_rows += detail_rows
-
-        print(f"Finished {rm}: {detail_rows} detail rows inserted.")
-
-    print(
-        f"\nInitial load done. "
-        f"Summary rows inserted/updated: {total_summary_rows}. "
-        f"Detail rows inserted: {total_detail_rows}."
-    )
-
-
 def incremental_load(
     conn,
     run_id: str | None = None,
-) -> None:
+) -> int:
     """
-    Incremental load for repeated or scheduled runs.
+    Load all events on an empty detail table, then only missing events on later runs.
 
     For each configured riksmöte:
     1. Fetch current voting summaries.
@@ -453,6 +382,7 @@ def incremental_load(
     4. Fetch XML details only for missing voting events.
 
     stg.votering is used as the checkpoint for detail ingestion.
+    Tables must already exist. Completed events are skipped when a run is resumed.
     """
 
     total_summary_rows = 0
@@ -496,20 +426,44 @@ def incremental_load(
         f"New detail rows inserted: {total_detail_rows}."
     )
 
+    return total_detail_rows
 
-def main():
-    if INGEST_MODE not in {"init", "incremental"}:
-        raise ValueError(f"Invalid INGEST_MODE={INGEST_MODE!r}. Use 'init' or 'incremental'.")
 
-    conn = get_connection()
+def run(
+    engine: Engine,
+    korning_id: str | None = None,
+) -> int:
+    """Load votes with a shared run ID and return newly inserted detail rows.
 
-    try:
-        if INGEST_MODE == "init":
-            initial_load(conn, KORNING_ID)
-        else:
-            incremental_load(conn, KORNING_ID)
-    finally:
-        conn.close()
+    Uses incremental loading for both first and subsequent runs.
+    An empty detail table makes every source event eligible for loading.
+    The same ID is written to summaries, new detail rows, and ops.load_log.
+    The log row covers this ingest step; antal_rader counts detail inserts only.
+    """
+    if korning_id is None:
+        korning_id = new_korning_id()
+
+    with log_step(
+        engine,
+        kalla="voteringar",
+        mallager="stg",
+        malltabell="votering",
+        korning_id=korning_id,
+    ) as step:
+        # Each summary batch and voting event commits separately in the loaders.
+        with engine.connect() as conn:
+            rows = incremental_load(conn, run_id=korning_id)
+
+        step.antal_rader = rows
+        return rows
+
+
+def main() -> int:
+    """Support standalone execution with the same loading and logging logic."""
+    return run(
+        get_engine(),
+        korning_id=os.getenv("KORNING_ID") or None,
+    )
 
 
 if __name__ == "__main__":

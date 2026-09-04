@@ -6,7 +6,6 @@ from src.ingest.voteringar import (
     get_expected_count,
     get_new_voting_events,
     incremental_load,
-    initial_load,
     upsert_voting_summaries,
     validate_voting_event,
 )
@@ -97,28 +96,19 @@ def test_get_new_voting_events_when_all_exist():
     assert get_new_voting_events(events, existing_votering_ids) == []
 
 
-class FakeCursor:
-    def __init__(self):
-        self.executed_rows = []
-        self.rowcount = 1
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        return False
-
-    def execute(self, sql, params):
-        self.executed_rows.append(params)
+class FakeResult:
+    def __init__(self, rowcount=1):
+        self.rowcount = rowcount
 
 
 class FakeConnection:
     def __init__(self):
-        self.fake_cursor = FakeCursor()
+        self.executed_rows = []
         self.committed = False
 
-    def cursor(self):
-        return self.fake_cursor
+    def execute(self, sql, params):
+        self.executed_rows.append(params)
+        return FakeResult()
 
     def commit(self):
         self.committed = True
@@ -154,7 +144,7 @@ def test_upsert_voting_summaries():
     assert result == 2
     assert conn.committed is True
 
-    assert conn.fake_cursor.executed_rows[0] == {
+    assert conn.executed_rows[0] == {
         "votering_id": "00178723-112D-4742-8BE9-B606161A44DF",
         "rm": "2025/26",
         "ja": 264,
@@ -217,7 +207,7 @@ def test_validate_voting_event_raises_on_wrong_votering_id():
         )
 
 
-def test_initial_load_loads_all_events(monkeypatch):
+def test_incremental_load_loads_all_events_when_table_is_empty(monkeypatch):
     events_by_rm = {
         "2024/25": [
             {"votering_id": "id-1"},
@@ -238,6 +228,12 @@ def test_initial_load_loads_all_events(monkeypatch):
         lambda rm: events_by_rm[rm],
     )
 
+    monkeypatch.setattr(
+        voteringar,
+        "get_existing_votering_ids",
+        lambda conn, rm: set(),
+    )
+
     def fake_upsert(conn, rm, events, run_id):
         summary_calls.append(
             {
@@ -249,13 +245,16 @@ def test_initial_load_loads_all_events(monkeypatch):
         return len(events)
 
     def fake_load_details(conn, events, run_id=None):
+        assert run_id == "run-123"
         detail_calls.append(events)
         return len(events) * 349
 
     monkeypatch.setattr(voteringar, "upsert_voting_summaries", fake_upsert)
     monkeypatch.setattr(voteringar, "load_voting_details", fake_load_details)
 
-    initial_load(conn=object(), run_id="run-123")
+    result = incremental_load(conn=object(), run_id="run-123")
+
+    assert result == 3 * 349
 
     assert summary_calls == [
         {
@@ -301,13 +300,16 @@ def test_incremental_load_only_loads_missing_events(monkeypatch):
         return len(events)
 
     def fake_load_details(conn, events, run_id=None):
+        assert run_id == "run-456"
         detail_calls.append(events)
         return len(events) * 349
 
     monkeypatch.setattr(voteringar, "upsert_voting_summaries", fake_upsert)
     monkeypatch.setattr(voteringar, "load_voting_details", fake_load_details)
 
-    incremental_load(conn=object(), run_id="run-456")
+    result = incremental_load(conn=object(), run_id="run-456")
+
+    assert result == 349
 
     # Summary always stores/updates every event returned by the list API.
     assert summary_calls == [events]
@@ -338,11 +340,14 @@ def test_incremental_load_loads_no_details_when_all_exist(monkeypatch):
     )
 
     def fake_load_details(conn, events, run_id=None):
+        assert run_id == "run-789"
         detail_calls.append(events)
         return 0
 
     monkeypatch.setattr(voteringar, "load_voting_details", fake_load_details)
 
-    incremental_load(conn=object(), run_id="run-789")
+    result = incremental_load(conn=object(), run_id="run-789")
+
+    assert result == 0
 
     assert detail_calls == [[]]
