@@ -192,6 +192,7 @@ def test_stg_columns_are_wide_enough(engine) -> None:
     )
     assert not problems, "columns too narrow: " + "; ".join(problems)
 
+
 def test_dim_parti_seed_has_correct_mandat(engine) -> None:
     """sql/32_dw_dim_parti_seed.sql must load the 2022 mandate distribution correctly.
 
@@ -199,9 +200,7 @@ def test_dim_parti_seed_has_correct_mandat(engine) -> None:
     the ALTER TABLE + seed file combo after pulling this change).
     """
     with engine.connect() as conn:
-        rows = conn.execute(
-            text("SELECT partikod, mandat_2022 FROM dw.dim_parti")
-        ).mappings().all()
+        rows = conn.execute(text("SELECT partikod, mandat_2022 FROM dw.dim_parti")).mappings().all()
 
     mandat_per_parti = {row["partikod"]: row["mandat_2022"] for row in rows}
 
