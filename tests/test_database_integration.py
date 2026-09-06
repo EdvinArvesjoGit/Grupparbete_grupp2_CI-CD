@@ -191,3 +191,27 @@ def test_stg_columns_are_wide_enough(engine) -> None:
         "this test would have passed vacuously. Check that sql/ DDL ran."
     )
     assert not problems, "columns too narrow: " + "; ".join(problems)
+
+
+def test_dim_parti_seed_has_correct_mandat(engine) -> None:
+    """sql/32_dw_dim_parti_seed.sql must load the 2022 mandate distribution correctly.
+
+    Guards against a stale or partially applied seed (e.g. forgetting to run
+    the ALTER TABLE + seed file combo after pulling this change).
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT partikod, mandat_2022 FROM dw.dim_parti")).mappings().all()
+
+    mandat_per_parti = {row["partikod"]: row["mandat_2022"] for row in rows}
+
+    assert mandat_per_parti.get("S") == 107
+    assert mandat_per_parti.get("SD") == 73
+    assert mandat_per_parti.get("M") == 68
+    assert mandat_per_parti.get("V") == 24
+    assert mandat_per_parti.get("C") == 24
+    assert mandat_per_parti.get("KD") == 19
+    assert mandat_per_parti.get("MP") == 18
+    assert mandat_per_parti.get("L") == 16
+
+    total = sum(v for v in mandat_per_parti.values() if v is not None)
+    assert total == 349, f"mandate total should be 349, got {total}"
