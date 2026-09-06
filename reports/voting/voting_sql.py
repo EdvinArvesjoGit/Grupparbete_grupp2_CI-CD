@@ -1,35 +1,54 @@
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
+from sqlalchemy import text
 
 from src.common.db import get_engine
 
-from sqlalchemy import text
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 
 FILTER_OPTIONS_SQL = text(
     """
     SELECT
-        COALESCE((SELECT array_agg(DISTINCT rm ORDER BY rm DESC)
-                  FROM dw.dim_votering WHERE rm IS NOT NULL), ARRAY[]::text[]) AS riksmoten,
-        COALESCE((SELECT array_agg(DISTINCT parti ORDER BY parti)
-                  FROM dw.dim_ledamot WHERE parti IS NOT NULL AND parti <> ''), ARRAY[]::text[]) AS partier,
-        COALESCE((SELECT array_agg(DISTINCT valkrets ORDER BY valkrets)
-                  FROM dw.dim_ledamot WHERE valkrets IS NOT NULL AND valkrets <> ''), ARRAY[]::text[]) AS valkretsar,
-        COALESCE((SELECT array_agg(DISTINCT rostvarde ORDER BY rostvarde)
+        COALESCE(
+        (
+                  SELECT array_agg(DISTINCT rm ORDER BY rm DESC)
+                  FROM dw.dim_votering
+                  WHERE rm IS NOT NULL), ARRAY[]::text[]) AS riksmoten,
+        COALESCE(
+        (
+                  SELECT array_agg(DISTINCT parti ORDER BY parti)
+                  FROM dw.dim_ledamot
+                  WHERE parti IS NOT NULL AND parti <> ''),
+                  ARRAY[]::text[]) AS partier,
+        COALESCE(
+        (
+                  SELECT array_agg(DISTINCT valkrets ORDER BY valkrets)
+                  FROM dw.dim_ledamot
+                  WHERE valkrets IS NOT NULL AND valkrets <> ''
+                ), ARRAY[]::text[]) AS valkretsar,
+        COALESCE(
+        (
+                  SELECT array_agg(DISTINCT rostvarde ORDER BY rostvarde)
                   FROM dw.dim_rost), ARRAY[]::text[]) AS roster,
-        COALESCE((SELECT array_agg(DISTINCT full_name ORDER BY full_name)
+        COALESCE(
+        (
+                  SELECT array_agg(DISTINCT full_name ORDER BY full_name)
                   FROM (
                       SELECT CONCAT(fornamn, ' ', efternamn) AS full_name
                       FROM dw.dim_ledamot
                       WHERE fornamn IS NOT NULL OR efternamn IS NOT NULL
                   ) names), ARRAY[]::text[]) AS ledamoter,
-        COALESCE((SELECT array_agg(DISTINCT beteckning ORDER BY beteckning)
-                  FROM dw.dim_votering WHERE beteckning IS NOT NULL AND beteckning <> ''), ARRAY[]::text[]) AS beteckningar
+        COALESCE(
+        (
+                SELECT array_agg(DISTINCT beteckning ORDER BY beteckning)
+                  FROM dw.dim_votering
+                  WHERE beteckning IS NOT NULL AND beteckning <> ''
+                ), ARRAY[]::text[]) AS beteckningar
     """
 )
 
