@@ -8,4 +8,4 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-URL = VOTING_LIST_URL #hämtar databasen från src.ingest.voteringar filen
+URL = VOTING_LIST_URL  # hämtar databasen från src.ingest.voteringar filen
