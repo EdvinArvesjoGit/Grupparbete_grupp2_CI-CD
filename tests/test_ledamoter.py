@@ -160,24 +160,27 @@ def test_parse_person_uppgift_handles_missing_data() -> None:
 
 def test_run_returns_total_row_count(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure run returns the total number of rows loaded."""
-    monkeypatch.setattr(ledamoter, "fetch_ledamoter", lambda: {})
-    monkeypatch.setattr(ledamoter, "get_personer", lambda data: [])
 
-    monkeypatch.setattr(
-        ledamoter,
-        "load_personer",
-        lambda engine, personer, korning_id: 10,
-    )
-    monkeypatch.setattr(
-        ledamoter,
-        "load_person_uppdrag",
-        lambda engine, personer, korning_id: 20,
-    )
-    monkeypatch.setattr(
-        ledamoter,
-        "load_person_uppgift",
-        lambda engine, personer, korning_id: 30,
-    )
+    def fake_fetch_ledamoter() -> dict:
+        return {}
+
+    def fake_get_personer(data: dict) -> list:
+        return []
+
+    def fake_load_personer(engine, personer, korning_id: str) -> int:
+        return 10
+
+    def fake_load_person_uppdrag(engine, personer, korning_id: str) -> int:
+        return 20
+
+    def fake_load_person_uppgift(engine, personer, korning_id: str) -> int:
+        return 30
+
+    monkeypatch.setattr(ledamoter, "fetch_ledamoter", fake_fetch_ledamoter)
+    monkeypatch.setattr(ledamoter, "get_personer", fake_get_personer)
+    monkeypatch.setattr(ledamoter, "load_personer", fake_load_personer)
+    monkeypatch.setattr(ledamoter, "load_person_uppdrag", fake_load_person_uppdrag)
+    monkeypatch.setattr(ledamoter, "load_person_uppgift", fake_load_person_uppgift)
 
     fake_engine = object()
 
@@ -186,15 +189,17 @@ def test_run_returns_total_row_count(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result == 60
 
 
-def test_run_passes_same_korning_id_to_all_loaders(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_passes_same_korning_id_to_all_loaders(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure the same run ID is passed to all three staging loaders."""
+
     test_korning_id = "test-korning-123"
     received_ids: list[str] = []
 
-    monkeypatch.setattr(ledamoter, "fetch_ledamoter", lambda: {})
-    monkeypatch.setattr(ledamoter, "get_personer", lambda data: [])
+    def fake_fetch_ledamoter() -> dict:
+        return {}
+
+    def fake_get_personer(data: dict) -> list:
+        return []
 
     def fake_load_personer(engine, personer, korning_id: str) -> int:
         received_ids.append(korning_id)
@@ -208,21 +213,11 @@ def test_run_passes_same_korning_id_to_all_loaders(
         received_ids.append(korning_id)
         return 0
 
-    monkeypatch.setattr(
-        ledamoter,
-        "load_personer",
-        fake_load_personer,
-    )
-    monkeypatch.setattr(
-        ledamoter,
-        "load_person_uppdrag",
-        fake_load_person_uppdrag,
-    )
-    monkeypatch.setattr(
-        ledamoter,
-        "load_person_uppgift",
-        fake_load_person_uppgift,
-    )
+    monkeypatch.setattr(ledamoter, "fetch_ledamoter", fake_fetch_ledamoter)
+    monkeypatch.setattr(ledamoter, "get_personer", fake_get_personer)
+    monkeypatch.setattr(ledamoter, "load_personer", fake_load_personer)
+    monkeypatch.setattr(ledamoter, "load_person_uppdrag", fake_load_person_uppdrag)
+    monkeypatch.setattr(ledamoter, "load_person_uppgift", fake_load_person_uppgift)
 
     fake_engine = object()
 
