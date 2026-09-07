@@ -1,11 +1,16 @@
+import os
+
 import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
+from dotenv import load_dotenv
 
 import reports.riksdag.schemas as schemas
 
-API_URL = "http://127.0.0.1:8000"
+load_dotenv()
+
+API_URL = os.getenv("RIKSDAG_API_URL")
 
 # --------------------------------------------------
 # Mandatfördelning
