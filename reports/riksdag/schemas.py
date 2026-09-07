@@ -13,6 +13,20 @@ class Parti(StrEnum):
     LIBERALERNA = "L"
     MILJOPARTIET = "MP"
 
+    @property
+    def display_name(self) -> str:
+        names = {
+            "SOCIALDEMOKRATERNA": "Socialdemokraterna",
+            "MODERATERNA": "Moderaterna",
+            "SVERIGEDEMOKRATERNA": "Sverigedemokraterna",
+            "CENTERPARTIET": "Centerpartiet",
+            "VANSTERPARTIET": "Vänsterpartiet",
+            "KRISTDEMOKRATERNA": "Kristdemokraterna",
+            "LIBERALERNA": "Liberalerna",
+            "MILJOPARTIET": "Miljöpartiet",
+        }
+        return names[self.name]
+
 
 class Kon(StrEnum):
     MAN = "man"
@@ -20,7 +34,7 @@ class Kon(StrEnum):
 
 
 class Aldersgrupp(StrEnum):
-    UNDER_30 = "Under 30"
+    AGE_20_29 = "20–29"
     AGE_30_39 = "30–39"
     AGE_40_49 = "40–49"
     AGE_50_59 = "50–59"
@@ -41,3 +55,10 @@ class Ledamot(BaseModel):
     ort: str | None = None
     status: str | None = None
     ar_aktiv: bool
+
+
+class Riksmote(StrEnum):
+    RM_2022_23 = "2022/23"
+    RM_2023_24 = "2023/24"
+    RM_2024_25 = "2024/25"
+    RM_2025_26 = "2025/26"
