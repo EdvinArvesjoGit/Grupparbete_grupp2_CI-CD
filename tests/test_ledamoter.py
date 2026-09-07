@@ -1,3 +1,6 @@
+import pytest
+
+from src.ingest import ledamoter
 from src.ingest.ledamoter import (
     ensure_list,
     extract_single_value,
@@ -5,17 +8,18 @@ from src.ingest.ledamoter import (
     parse_person,
     parse_person_uppdrag,
     parse_person_uppgift,
+    run,
 )
 
 
-def test_ensure_list():
+def test_ensure_list() -> None:
     """Ensure values are normalized into lists."""
     assert ensure_list(None) == []
     assert ensure_list("value") == ["value"]
     assert ensure_list(["value"]) == ["value"]
 
 
-def test_extract_single_value():
+def test_extract_single_value() -> None:
     """Ensure single values are extracted from the API's list structure."""
     assert extract_single_value(None) is None
     assert extract_single_value([]) is None
@@ -26,7 +30,7 @@ def test_extract_single_value():
     assert extract_single_value([{}]) == "{}"
 
 
-def test_parse_person():
+def test_parse_person() -> None:
     """Ensure person fields are correctly mapped from the API response."""
     person = {
         "intressent_id": "123",
@@ -47,7 +51,7 @@ def test_parse_person():
     assert result["status"] == "Tjänstgörande"
 
 
-def test_parse_person_uppdrag():
+def test_parse_person_uppdrag() -> None:
     """Ensure assignment data is correctly mapped from the API response."""
     person = {
         "personuppdrag": {
@@ -86,7 +90,7 @@ def test_parse_person_uppdrag():
     assert uppdrag["uppgift"] == "example"
 
 
-def test_parse_person_uppdrag_handles_empty_string():
+def test_parse_person_uppdrag_handles_empty_string() -> None:
     """Ensure missing assignment data is handled without raising an error."""
     person = {
         # This structure has been observed in the API when assignments
@@ -97,7 +101,7 @@ def test_parse_person_uppdrag_handles_empty_string():
     assert parse_person_uppdrag(person) == []
 
 
-def test_parse_person_uppgift():
+def test_parse_person_uppgift() -> None:
     """Ensure person details are correctly mapped from the API response."""
     person = {
         "personuppgift": {
@@ -127,7 +131,7 @@ def test_parse_person_uppgift():
     assert uppgift["hangar_id"] == "456"
 
 
-def test_get_personer():
+def test_get_personer() -> None:
     """Ensure persons are extracted from the API response as a list."""
     data = {
         "personlista": {
@@ -145,10 +149,87 @@ def test_get_personer():
     assert result[0]["tilltalsnamn"] == "Anna"
 
 
-def test_parse_person_uppgift_handles_missing_data():
+def test_parse_person_uppgift_handles_missing_data() -> None:
     """Ensure missing person details are handled without raising an error."""
     person = {
         "personuppgift": "",
     }
 
     assert parse_person_uppgift(person) == []
+
+
+def test_run_returns_total_row_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure run returns the total number of rows loaded."""
+    monkeypatch.setattr(ledamoter, "fetch_ledamoter", lambda: {})
+    monkeypatch.setattr(ledamoter, "get_personer", lambda data: [])
+
+    monkeypatch.setattr(
+        ledamoter,
+        "load_personer",
+        lambda engine, personer, korning_id: 10,
+    )
+    monkeypatch.setattr(
+        ledamoter,
+        "load_person_uppdrag",
+        lambda engine, personer, korning_id: 20,
+    )
+    monkeypatch.setattr(
+        ledamoter,
+        "load_person_uppgift",
+        lambda engine, personer, korning_id: 30,
+    )
+
+    fake_engine = object()
+
+    result = run(fake_engine, "test-korning-123")
+
+    assert result == 60
+
+
+def test_run_passes_same_korning_id_to_all_loaders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure the same run ID is passed to all three staging loaders."""
+    test_korning_id = "test-korning-123"
+    received_ids: list[str] = []
+
+    monkeypatch.setattr(ledamoter, "fetch_ledamoter", lambda: {})
+    monkeypatch.setattr(ledamoter, "get_personer", lambda data: [])
+
+    def fake_load_personer(engine, personer, korning_id: str) -> int:
+        received_ids.append(korning_id)
+        return 0
+
+    def fake_load_person_uppdrag(engine, personer, korning_id: str) -> int:
+        received_ids.append(korning_id)
+        return 0
+
+    def fake_load_person_uppgift(engine, personer, korning_id: str) -> int:
+        received_ids.append(korning_id)
+        return 0
+
+    monkeypatch.setattr(
+        ledamoter,
+        "load_personer",
+        fake_load_personer,
+    )
+    monkeypatch.setattr(
+        ledamoter,
+        "load_person_uppdrag",
+        fake_load_person_uppdrag,
+    )
+    monkeypatch.setattr(
+        ledamoter,
+        "load_person_uppgift",
+        fake_load_person_uppgift,
+    )
+
+    fake_engine = object()
+
+    run(fake_engine, test_korning_id)
+
+    assert received_ids == [
+        test_korning_id,
+        test_korning_id,
+        test_korning_id,
+    ]
