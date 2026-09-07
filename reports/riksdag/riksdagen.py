@@ -11,6 +11,7 @@ API_URL = "http://127.0.0.1:8000"
 # Mandatfördelning
 # --------------------------------------------------
 
+st.image("reports/riksdag/riksdagen.svg", width=180)
 st.title("Mandatfördelning 2022-2026")
 st.caption("Fördelningen av riksdagens 349 mandat efter valet 2022.")
 
@@ -23,8 +24,10 @@ total_mandat = sum(row["mandat_2022"] for row in mandat_data)
 
 antal_partier = len(mandat_data)
 
+storsta_parti = max(mandat_data, key=lambda row: row["mandat_2022"])
+
 # KPI
-kpi1, kpi2 = st.columns(2)
+kpi1, kpi2, kpi3 = st.columns(3)
 
 kpi1.metric(
     "Antal platser",
@@ -34,22 +37,28 @@ kpi2.metric(
     "Antal partier",
     antal_partier,
 )
+kpi3.metric("Största parti", storsta_parti["partikod"], f"{storsta_parti['mandat_2022']} mandat")
 
 # Bar chart
 mandat_df = pd.DataFrame(mandat_data)
 
-mandat_chart = (
+bars = (
     alt.Chart(mandat_df)
     .mark_bar(color="#1F4E79")
     .encode(
         x=alt.X(
-            "mandat_2022:Q",
-            axis=None,
+            "partikod:N",
+            title=None,
+            axis=alt.Axis(
+                labelAngle=0,
+                labelFontSize=16,
+                labelOverlap=False,
+            ),
         ),
         y=alt.Y(
-            "partinamn:N",
+            "mandat_2022:Q",
             title=None,
-            sort="-x",
+            axis=None,
         ),
         tooltip=[
             alt.Tooltip(
@@ -59,12 +68,32 @@ mandat_chart = (
             alt.Tooltip("mandat_2022:Q", title="mandat"),
         ],
     )
-    .properties(height=350)
 )
-st.altair_chart(
-    mandat_chart,
-    use_container_width=True,
+text = (
+    alt.Chart(mandat_df)
+    .mark_text(
+        align="center",
+        baseline="bottom",
+        dy=-5,
+    )
+    .encode(
+        x=alt.X(
+            "partikod:N",
+            axis=alt.Axis(
+                labelAngle=0,
+                labelFontSize=16,
+            ),
+        ),
+        y=alt.Y("mandat_2022:Q"),
+        text=alt.Text("mandat_2022:Q"),
+    )
 )
+
+mandat_chart = (bars + text).properties(
+    height=350,
+)
+
+st.altair_chart(mandat_chart, use_container_width=True)
 
 # --------------------------------------------------
 # Riksdagens sammansättning
