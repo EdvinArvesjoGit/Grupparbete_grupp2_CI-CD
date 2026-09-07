@@ -100,7 +100,9 @@ st.altair_chart(mandat_chart, use_container_width=True)
 # --------------------------------------------------
 
 st.title("Riksdagens sammansättning")
-st.caption("Visar riksdagens sammansättning efter parti, kön och ålder.")
+st.caption(
+    "Visar riksdagens sammansättning efter parti, kön och ålder under hela mandatperiod 2022-2026."
+)
 
 # Filter
 selected_parti = st.selectbox(
@@ -170,10 +172,14 @@ with col1:
                 x=alt.X(
                     "antal:Q",
                     title=None,
+                    axis=None,
                 ),
                 y=alt.Y("aldersgrupp:N", title=None, sort=age_order),
                 tooltip=[
-                    alt.Tooltip("aldersgrupp:N", title=None),
+                    alt.Tooltip(
+                        "aldersgrupp:N",
+                        title=None,
+                    ),
                     alt.Tooltip(
                         "antal:Q",
                         title=None,
