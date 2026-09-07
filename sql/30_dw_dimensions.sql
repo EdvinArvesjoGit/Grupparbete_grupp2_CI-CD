@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS dw.dim_ledamot (
     intressent_id       VARCHAR(13) NOT NULL,
     fornamn             VARCHAR(100) NOT NULL,
     efternamn           VARCHAR(100) NOT NULL,
+    kon                 VARCHAR(10) NOT NULL DEFAULT 'Okänt',
     parti               VARCHAR(10),
     fodd_ar             INTEGER,
     valkrets            VARCHAR(100),

@@ -125,6 +125,7 @@ def _rensa_person(person):
         "intressent_id": intressent_id.strip(),
         "fornamn": (person.get("tilltalsnamn") or "").strip(),
         "efternamn": (person.get("efternamn") or "").strip(),
+        "kon": (person.get("kon") or "Okänt").strip(),
         "parti": parti,
         "fodd_ar": _sakert_heltal(person.get("fodd_ar")),
         "valkrets": (person.get("valkrets") or "Okänd").strip(),
@@ -183,14 +184,15 @@ def _infoga_ny_version(conn, person):
     conn.execute(
         text("""
             INSERT INTO dw.dim_ledamot
-                (intressent_id, fornamn, efternamn, parti, fodd_ar, valkrets, giltig_fran)
+                (intressent_id, fornamn, efternamn, kon, parti, fodd_ar, valkrets, giltig_fran)
             VALUES
-                (:intressent_id, :fornamn, :efternamn, :parti, :fodd_ar, :valkrets, :idag)
+                (:intressent_id, :fornamn, :efternamn, :kon, :parti, :fodd_ar, :valkrets, :idag)
         """),
         {
             "intressent_id": person["intressent_id"],
             "fornamn": person["fornamn"],
             "efternamn": person["efternamn"],
+            "kon": person["kon"],
             "parti": person["parti"],
             "fodd_ar": person["fodd_ar"],
             "valkrets": person["valkrets"],
