@@ -1,0 +1,193 @@
+name: Data release
+
+# Continuous Delivery for the warehouse.
+#
+# Restores the previous release into a fresh Postgres, runs the pipeline
+# incrementally against data.riksdagen.se, and publishes the result as a new
+# release. Because the ingest is resumable, a run that fails partway still
+# banks its progress: the artifact is published regardless, and the next run
+# continues from where it stopped.
+#
+# First run has no previous release and bootstraps from scratch (~30-45 min).
+# Subsequent runs fetch only new voteringar and take a couple of minutes.
+
+on:
+  schedule:
+    # 04:15 UTC daily. Scheduled runs are queued, not precise, and can be
+    # delayed or dropped at peak times - nothing here depends on exact timing.
+    - cron: "15 4 * * *"
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: "Ignore the previous release and rebuild from scratch"
+        type: boolean
+        default: false
+
+# Never let a long bootstrap and a scheduled run race on the same release tag.
+concurrency:
+  group: data-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write        # required to create releases
+
+jobs:
+  build-and-publish:
+    name: Build warehouse and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: riksdag
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGDATABASE: riksdag
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGCONN: postgresql://postgres:postgres@localhost:5432/riksdag
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyarrow
+
+      - name: Install postgresql-client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      # ---------------------------------------------------------------
+      # Restore previous state so the incremental load has something to
+      # compare against. Without this every run refetches all voteringar.
+      # ---------------------------------------------------------------
+      - name: Download previous release
+        id: previous
+        if: ${{ !inputs.bootstrap }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download --pattern "riksdag-db.pgc" --dir . 2>/dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            ls -lh riksdag-db.pgc
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No previous release found - this run will bootstrap from scratch."
+          fi
+
+      - name: Restore previous state
+        if: steps.previous.outputs.found == 'true'
+        run: |
+          pg_restore --no-owner --no-privileges -d "$PGCONN" riksdag-db.pgc
+          psql "$PGCONN" -c "SELECT 'stg.votering' AS tabell, count(*) FROM stg.votering;"
+
+      # ---------------------------------------------------------------
+      # Apply DDL. Idempotent, so it is safe over a restored database and
+      # it picks up any new tables added since the last release.
+      # ---------------------------------------------------------------
+      - name: Apply schema and DDL
+        run: |
+          psql "$PGCONN" -v ON_ERROR_STOP=1 -f sql/00_init.sql
+          for f in sql/[1-3]*.sql; do
+            echo "--- $f"
+            psql "$PGCONN" -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      # ---------------------------------------------------------------
+      # The ingest is resumable: if an API call fails midway, rows already
+      # written stay written and the next run resumes from there. So a
+      # failure here must NOT stop us publishing - otherwise a partial
+      # bootstrap is discarded and we start over every night.
+      # ---------------------------------------------------------------
+      - name: Run pipeline
+        id: pipeline
+        continue-on-error: true
+        run: python -m src.run_pipeline
+
+      - name: Row counts
+        id: counts
+        run: |
+          psql "$PGCONN" -At -F' ' -c "
+            SELECT 'stg.person', count(*) FROM stg.person
+            UNION ALL SELECT 'stg.votering', count(*) FROM stg.votering
+            UNION ALL SELECT 'dw.dim_ledamot', count(*) FROM dw.dim_ledamot
+          " | tee counts.txt
+          echo "votering=$(psql "$PGCONN" -At -c 'SELECT count(*) FROM stg.votering')" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------
+      # Two artifacts, two consumers:
+      #   riksdag-db.pgc  - state for the next run. Restores in seconds.
+      #   *.parquet       - for the reports. No database needed to read them.
+      # ---------------------------------------------------------------
+      - name: Dump database
+        run: |
+          pg_dump -d "$PGCONN" -Fc -Z6 -f riksdag-db.pgc
+          ls -lh riksdag-db.pgc
+
+      - name: Export Parquet
+        run: |
+          python scripts/export_artifacts.py --out artifacts/
+          ls -lh artifacts/
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="data-$(date -u +%Y-%m-%d-%H%M)"
+          STATUS="${{ steps.pipeline.outcome }}"
+          {
+            echo "Warehouse built $(date -u '+%Y-%m-%d %H:%M UTC')."
+            echo ""
+            echo "Pipeline step: **$STATUS**"
+            if [ "$STATUS" != "success" ]; then
+              echo ""
+              echo "The pipeline did not complete. Rows fetched before the failure"
+              echo "are included; the next run resumes from that point."
+            fi
+            echo ""
+            echo '```'
+            cat counts.txt
+            echo '```'
+            echo ""
+            echo "**riksdag-db.pgc** - full database dump, restored by the next run."
+            echo "**\*.parquet** - warehouse tables for reports:"
+            echo ""
+            echo '```python'
+            echo 'import pandas as pd'
+            echo "df = pd.read_parquet('https://github.com/${{ github.repository }}/releases/latest/download/dw_dim_ledamot.parquet')"
+            echo '```'
+            echo ""
+            echo "Källa: Sveriges riksdag"
+          } > notes.md
+
+          gh release create "$TAG" \
+            --title "Warehouse $TAG" \
+            --notes-file notes.md \
+            riksdag-db.pgc artifacts/*.parquet
+
+      # Publish first, then surface the failure. Red build, progress kept.
+      - name: Fail if the pipeline did not complete
+        if: steps.pipeline.outcome != 'success'
+        run: |
+          echo "Pipeline step failed - artifact published with partial data."
+          exit 1
