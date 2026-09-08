@@ -79,8 +79,11 @@ def export(out_dir: Path) -> int:
             df.to_parquet(path, compression="zstd", index=False)
         except Exception as exc:
             # Retry once with everything as text - better a usable file than none.
-            print(f"    {label}: to_parquet misslyckades ({type(exc).__name__}), "
-                  f"försöker igen med allt som text", file=sys.stderr)
+            print(
+                f"    {label}: to_parquet misslyckades ({type(exc).__name__}), "
+                f"försöker igen med allt som text",
+                file=sys.stderr,
+            )
             try:
                 df.astype(str).to_parquet(path, compression="zstd", index=False)
             except Exception as exc2:
@@ -89,11 +92,13 @@ def export(out_dir: Path) -> int:
                 continue
 
         total_rows += len(df)
-        print(f"{label:<28} {len(df):>9,} rader  ->  {path.name} "
-              f"({path.stat().st_size / 1e6:.1f} MB)")
+        print(
+            f"{label:<28} {len(df):>9,} rader  ->  {path.name} ({path.stat().st_size / 1e6:.1f} MB)"
+        )
 
-    print(f"\n{len(targets) - len(failures)} av {len(targets)} tabeller, "
-          f"{total_rows:,} rader totalt")
+    print(
+        f"\n{len(targets) - len(failures)} av {len(targets)} tabeller, {total_rows:,} rader totalt"
+    )
     if failures:
         print(f"Misslyckades: {', '.join(failures)}", file=sys.stderr)
         return 1
