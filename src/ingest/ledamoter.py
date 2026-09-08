@@ -1,10 +1,9 @@
 import json
+from typing import Any
 from uuid import uuid4
 
 import requests
-from sqlalchemy import text
-
-from src.common.db import get_engine
+from sqlalchemy import Engine, text
 
 API_URL = "https://data.riksdagen.se/personlista/"
 
@@ -14,7 +13,7 @@ PARAMS = {
 }
 
 
-def fetch_ledamoter():
+def fetch_ledamoter() -> dict[str, Any]:
     """Fetch member data from the Swedish Parliament API."""
     response = requests.get(
         API_URL,
@@ -28,7 +27,7 @@ def fetch_ledamoter():
     return response.json()
 
 
-def ensure_list(value):
+def ensure_list(value: Any) -> list[Any]:
     """Normalize a value so the result is always a list."""
     if value is None:
         return []
@@ -39,7 +38,7 @@ def ensure_list(value):
     return [value]
 
 
-def extract_single_value(value):
+def extract_single_value(value: Any) -> str | None:
     """Extract a single value from the API's list structure."""
     if value is None:
         return None
@@ -59,14 +58,14 @@ def extract_single_value(value):
     return str(value)
 
 
-def get_personer(data):
+def get_personer(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract the list of persons from the API response."""
     personer = data["personlista"]["person"]
 
     return ensure_list(personer)
 
 
-def parse_person(person):
+def parse_person(person: dict[str, Any]) -> dict[str, Any]:
     """Convert an API person into a row for stg.person."""
     return {
         "hangar_guid": person.get("hangar_guid"),
@@ -89,7 +88,7 @@ def parse_person(person):
     }
 
 
-def parse_person_uppdrag(person):
+def parse_person_uppdrag(person: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert a person's assignments into rows for stg.person_uppdrag."""
     personuppdrag = person.get("personuppdrag")
 
@@ -128,7 +127,7 @@ def parse_person_uppdrag(person):
     return parsed_uppdrag
 
 
-def parse_person_uppgift(person):
+def parse_person_uppgift(person: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert person details into rows for stg.person_uppgift."""
     personuppgift = person.get("personuppgift")
 
@@ -155,7 +154,11 @@ def parse_person_uppgift(person):
     return parsed_uppgifter
 
 
-def load_personer(personer, korning_id):
+def load_personer(
+    engine: Engine,
+    personer: list[dict[str, Any]],
+    korning_id: str,
+) -> int:
     """Load parsed person rows into stg.person."""
     rows = []
 
@@ -212,14 +215,18 @@ def load_personer(personer, korning_id):
         """
     )
 
-    with get_engine().begin() as conn:
+    with engine.begin() as conn:
         conn.execute(text("TRUNCATE stg.person"))
         conn.execute(sql, rows)
 
     return len(rows)
 
 
-def load_person_uppdrag(personer, korning_id):
+def load_person_uppdrag(
+    engine: Engine,
+    personer: list[dict[str, Any]],
+    korning_id: str,
+) -> int:
     """Load parsed assignment rows into stg.person_uppdrag."""
     rows = []
 
@@ -271,14 +278,18 @@ def load_person_uppdrag(personer, korning_id):
         """
     )
 
-    with get_engine().begin() as conn:
+    with engine.begin() as conn:
         conn.execute(text("TRUNCATE stg.person_uppdrag"))
         conn.execute(sql, rows)
 
     return len(rows)
 
 
-def load_person_uppgift(personer, korning_id):
+def load_person_uppgift(
+    engine: Engine,
+    personer: list[dict[str, Any]],
+    korning_id: str,
+) -> int:
     """Load parsed person detail rows into stg.person_uppgift."""
     rows = []
 
@@ -312,31 +323,37 @@ def load_person_uppgift(personer, korning_id):
         """
     )
 
-    with get_engine().begin() as conn:
+    with engine.begin() as conn:
         conn.execute(text("TRUNCATE stg.person_uppgift"))
         conn.execute(sql, rows)
 
     return len(rows)
 
 
-def main():
+def run(engine: Engine, korning_id: str | None = None) -> int:
     """Fetch, parse, and load member data into the staging database."""
-    korning_id = str(uuid4())
+    if korning_id is None:
+        korning_id = str(uuid4())
 
     data = fetch_ledamoter()
     personer = get_personer(data)
 
     print(f"Fetched {len(personer)} persons")
 
-    antal_personer = load_personer(personer, korning_id)
+    antal_personer = load_personer(engine, personer, korning_id)
     print(f"Loaded {antal_personer} rows into stg.person")
 
-    antal_uppdrag = load_person_uppdrag(personer, korning_id)
+    antal_uppdrag = load_person_uppdrag(engine, personer, korning_id)
     print(f"Loaded {antal_uppdrag} rows into stg.person_uppdrag")
 
-    antal_uppgifter = load_person_uppgift(personer, korning_id)
+    antal_uppgifter = load_person_uppgift(engine, personer, korning_id)
     print(f"Loaded {antal_uppgifter} rows into stg.person_uppgift")
+
+    return antal_personer + antal_uppdrag + antal_uppgifter
 
 
 if __name__ == "__main__":
-    main()
+    from src.common.db import get_engine
+
+    rows_loaded = run(get_engine())
+    print(f"Total rows loaded: {rows_loaded}")
