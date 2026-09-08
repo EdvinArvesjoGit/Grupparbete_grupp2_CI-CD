@@ -5,8 +5,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.ingest.voteringar import VOTING_LIST_URL
-
-
+from src.ingest.voteringar import VOTING_LIST_URL  # noqa: E402
 
 URL = VOTING_LIST_URL  # hämtar databasen från src.ingest.voteringar filen

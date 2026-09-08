@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import html
-import sys
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -28,17 +26,26 @@ st.markdown(
     .block-container { max-width: 1180px; padding-top: 0.8rem; }
     .topline { height: 7px; background: var(--riksdag-blue); margin: -1rem -2rem 1rem; }
     .brand { border-bottom: 1px solid var(--riksdag-border); padding: .45rem 0 .8rem; }
-    .brand-kicker { color: #555; font-size: .8rem; letter-spacing: .04em; text-transform: uppercase; }
-    .brand-title { color: var(--riksdag-dark); font-size: 1.9rem; font-weight: 700; margin: .05rem 0 0; }
+    .brand-kicker { color: #555; font-size: .8rem; letter-spacing: .04em;
+    text-transform: uppercase; }
+    .brand-title { color: var(--riksdag-dark);
+    font-size: 1.9rem; font-weight: 700; margin: .05rem 0 0; }
     .crumb { color: #555; font-size: .85rem; margin: .8rem 0 1.1rem; }
-    .page-title { color: var(--riksdag-dark); font-size: 2rem; font-weight: 700; margin-bottom: .15rem; }
+    .page-title { color: var(--riksdag-dark); font-size: 2rem; font-weight: 700;
+    margin-bottom: .15rem; }
     .intro { color: #444; margin-bottom: 1.2rem; }
-    .filter-box { background: var(--riksdag-light); border: 1px solid var(--riksdag-border); padding: 1rem 1.1rem .55rem; margin-bottom: 1.2rem; }
-    .section-title { color: var(--riksdag-dark); font-size: 1.35rem; font-weight: 700; border-bottom: 3px solid var(--riksdag-blue); padding-bottom: .35rem; margin: 1.2rem 0 .8rem; }
-    .condition { background: #f7f7f7; border-left: 4px solid var(--riksdag-blue); padding: .65rem .8rem; margin-bottom: .9rem; }
+    .filter-box { background: var(--riksdag-light); border: 1px solid var(--riksdag-border);
+    padding: 1rem 1.1rem .55rem; margin-bottom: 1.2rem; }
+    .section-title { color: var(--riksdag-dark);
+    font-size: 1.35rem; font-weight: 700; border-bottom: 3px solid var(--riksdag-blue);
+    padding-bottom: .35rem; margin: 1.2rem 0 .8rem; }
+    .condition { background: #f7f7f7; border-left: 4px solid var(--riksdag-blue);
+    padding: .65rem .8rem; margin-bottom: .9rem; }
     .result-count { font-size: .95rem; color: #333; margin: .3rem 0 .8rem; }
-    .vote-pill { display:inline-block; border:1px solid #bbb; border-radius: 999px; padding:.12rem .5rem; font-size:.8rem; }
-    .footer { border-top: 1px solid var(--riksdag-border); margin-top: 2rem; padding-top: 1rem; color:#555; font-size:.82rem; }
+    .vote-pill { display:inline-block; border:1px solid #bbb; border-radius: 999px;
+    padding:.12rem .5rem; font-size:.8rem; }
+    .footer { border-top: 1px solid var(--riksdag-border); margin-top: 2rem;
+    padding-top: 1rem; color:#555; font-size:.82rem; }
     div[data-testid="stDataFrame"] { border: 1px solid var(--riksdag-border); }
     </style>
     """,
