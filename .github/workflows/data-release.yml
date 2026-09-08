@@ -80,24 +80,39 @@ jobs:
       - name: Install postgresql-client
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
 
-      # ---------------------------------------------------------------
-      # Restore previous state so the incremental load has something to
-      # compare against. Without this every run refetches all voteringar.
-      # ---------------------------------------------------------------
+# Restores state so the incremental load has something to compare against.
+      # Errors are NOT suppressed here: a silent failure means a 45-minute
+      # bootstrap instead of a two-minute incremental run, so we want to see it.
       - name: Download previous release
         id: previous
         if: ${{ !inputs.bootstrap }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release download --pattern "riksdag-db.pgc" --dir . 2>/dev/null; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            ls -lh riksdag-db.pgc
-          else
+          echo "--- Releases visible to this job:"
+          gh release list --limit 10 || echo "(gh release list failed)"
+
+          TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty' 2>&1 || true)
+          echo "--- Latest release tag: '${TAG:-<none>}'"
+
+          if [ -z "$TAG" ]; then
+            echo "No release found - bootstrapping from scratch."
             echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "No previous release found - this run will bootstrap from scratch."
+            exit 0
           fi
 
+          echo "--- Assets on $TAG:"
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"' || true
+
+          echo "--- Downloading riksdag-db.pgc from $TAG"
+          if gh release download "$TAG" --pattern "riksdag-db.pgc" --dir . --clobber; then
+            ls -lh riksdag-db.pgc
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Download FAILED - see the error above. Bootstrapping instead."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+          
       - name: Restore previous state
         if: steps.previous.outputs.found == 'true'
         run: |
