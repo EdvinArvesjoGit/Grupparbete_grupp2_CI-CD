@@ -59,11 +59,14 @@ jobs:
       PGUSER: postgres
       PGPASSWORD: postgres
       PGCONN: postgresql://postgres:postgres@localhost:5432/riksdag
+      # `python scripts/x.py` puts scripts/ on sys.path, not the repo root,
+      # so `from src.common...` fails without this.
+      PYTHONPATH: ${{ github.workspace }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -124,15 +127,23 @@ jobs:
         continue-on-error: true
         run: python -m src.run_pipeline
 
+      # Reports on whatever tables exist. A table that has not been created
+      # yet (dw.fakta_rost, for example) is reported as missing rather than
+      # failing the job - an incomplete warehouse must still publish.
       - name: Row counts
-        id: counts
         run: |
-          psql "$PGCONN" -At -F' ' -c "
-            SELECT 'stg.person', count(*) FROM stg.person
-            UNION ALL SELECT 'stg.votering', count(*) FROM stg.votering
-            UNION ALL SELECT 'dw.dim_ledamot', count(*) FROM dw.dim_ledamot
-          " | tee counts.txt
-          echo "votering=$(psql "$PGCONN" -At -c 'SELECT count(*) FROM stg.votering')" >> "$GITHUB_OUTPUT"
+          : > counts.txt
+          for t in stg.person stg.person_uppdrag stg.person_uppgift \
+                   stg.votering dw.dim_ledamot dw.dim_parti dw.fakta_rost; do
+            exists=$(psql "$PGCONN" -At -c "SELECT to_regclass('$t') IS NOT NULL")
+            if [ "$exists" = "t" ]; then
+              n=$(psql "$PGCONN" -At -c "SELECT count(*) FROM $t")
+            else
+              n="saknas"
+            fi
+            printf '%-26s %s\n' "$t" "$n" >> counts.txt
+          done
+          cat counts.txt
 
       # ---------------------------------------------------------------
       # Two artifacts, two consumers:
