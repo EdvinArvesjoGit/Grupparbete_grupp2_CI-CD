@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS dw.dim_parti (
 -- One row per unique  voting round
 CREATE TABLE IF NOT EXISTS dw.dim_votering (
     votering_nyckel SERIAL PRIMARY KEY,
-    votering_id     VARCHAR(20) NOT NULL UNIQUE,
+    votering_id     UUID NOT NULL UNIQUE,
     rm              VARCHAR(10),        -- parliamentary session (riksmöte), example '2024/25'
     beteckning      VARCHAR(20),
     punkt           VARCHAR(10),        -- important: same votering_id can have multiple points
