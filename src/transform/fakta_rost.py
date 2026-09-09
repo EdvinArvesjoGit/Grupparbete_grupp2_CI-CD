@@ -56,6 +56,8 @@ def load_fakta_rost():
     print(f"Rader insatta/uppdaterade i fakta_rost: {antal_infogade}")
     print(f"Överhoppade (saknar obligatorisk koppling): {antal_overhoppade}")
 
+    return antal_infogade
+
 
 def _bygg_ledamot_lookup(conn):
     """intressent_id -> ledamot_nyckel, only for currently active dim_ledamot rows."""
@@ -180,6 +182,11 @@ def _infoga_fakta_rader(conn, rader):
 
     result = conn.execute(sql, rader)
     return result.rowcount
+
+
+def run(engine=None, korning_id=None):
+    """Standard pipeline entry point. Returns rows written this run."""
+    return load_fakta_rost()
 
 
 if __name__ == "__main__":

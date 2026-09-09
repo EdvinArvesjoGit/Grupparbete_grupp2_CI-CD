@@ -74,6 +74,8 @@ def load_dim_ledamot():
     print(f"Befintliga personer uppdaterade (SCD-2): {antal_uppdaterade}")
     print(f"Överhoppade (utanför scope eller saknar id): {antal_overhoppade}")
 
+    return antal_nya + antal_uppdaterade
+
 
 def _hamta_relevanta_id(conn):
     """
@@ -199,6 +201,11 @@ def _infoga_ny_version(conn, person):
             "idag": date.today(),
         },
     )
+
+
+def run(engine=None, korning_id=None):
+    """Standard pipeline entry point. Returns rows written this run."""
+    return load_dim_ledamot()
 
 
 if __name__ == "__main__":
