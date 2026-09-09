@@ -27,6 +27,8 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+from sqlalchemy import text
+
 from src.common.db import get_engine
 from src.common.pipeline import new_korning_id, setup_logging
 
@@ -40,6 +42,11 @@ class Step:
     layer: str
     description: str
     depends_on: tuple[str, ...] = field(default_factory=tuple)
+    # Table that must contain rows after this step. Checked AFTER the step
+    # runs, not against its return value: an incremental or idempotent step
+    # legitimately writes 0 rows when there is nothing new, while an empty
+    # target table means the step never actually produced anything.
+    verify_table: str | None = None
 
 
 # Order matters: this list IS the dependency order.
@@ -60,8 +67,9 @@ STEPS: tuple[Step, ...] = (
         name="dim_votering",
         module="src.transform.dim_votering",
         layer="dw",
-        description="stg.votering -> dw.dim_votering (SCD-2)",
+        description="stg.votering -> dw.dim_votering",
         depends_on=("voteringar",),
+        verify_table="dw.dim_votering",
     ),
     Step(
         name="dim_ledamot",
@@ -69,6 +77,7 @@ STEPS: tuple[Step, ...] = (
         layer="dw",
         description="stg.person -> dw.dim_ledamot (SCD-2)",
         depends_on=("ledamoter",),
+        verify_table="dw.dim_ledamot",
     ),
     Step(
         name="fakta_rost",
@@ -76,19 +85,13 @@ STEPS: tuple[Step, ...] = (
         layer="dw",
         description="stg.votering + dw.dim_* -> dw.fakta_rost",
         depends_on=("voteringar", "dim_votering", "dim_ledamot"),
+        verify_table="dw.fakta_rost",
     ),
 )
 
 
 class StepFailed(Exception):
     """Raised when a pipeline step does not complete."""
-
-
-# Steps where a zero row count means something is broken rather than "no data".
-# A transform over a populated staging table that produces nothing is almost
-# always a join that matches nothing - which is silent and easy to miss,
-# because the step itself raises no error.
-EXPECT_ROWS = frozenset({"fakta_rost", "dim_ledamot", "dim_votering"})
 
 
 def _resolve_callable(module_name: str):
@@ -168,19 +171,37 @@ def run_step(step: Step, engine, korning_id: str) -> StepResult:
     if rows is None:
         logger.warning("%s returned no row count — run() should return int", step.module)
 
-    if rows == 0 and step.name in EXPECT_ROWS:
-        logger.error(
-            "step %-14s loaded 0 rader — förväntas aldrig vara tomt. "
-            "Troligen en join som inte matchar.",
+    if step.verify_table:
+        try:
+            with engine.connect() as conn:
+                present = conn.execute(
+                    text(f"SELECT count(*) FROM {step.verify_table}")
+                ).scalar_one()
+        except Exception as exc:
+            logger.error(
+                "step %-14s kunde inte kontrollera %s: %s", step.name, step.verify_table, exc
+            )
+            return StepResult(
+                step.name, "FAILED", elapsed, rows, f"Kunde inte läsa {step.verify_table}: {exc}"
+            )
+        if present == 0:
+            logger.error(
+                "step %-14s lämnade %s tom — troligen en join som inte matchar",
+                step.name,
+                step.verify_table,
+            )
+            return StepResult(
+                step.name, "FAILED", elapsed, rows, f"{step.verify_table} är tom efter steget"
+            )
+        logger.info(
+            "step %-14s OK     in %5.1fs  skrev=%s  %s har %s rader",
             step.name,
-        )
-        return StepResult(
-            step.name,
-            "FAILED",
             elapsed,
-            0,
-            "Steget laddade 0 rader men förväntas aldrig vara tomt",
+            rows,
+            step.verify_table,
+            f"{present:,}",
         )
+        return StepResult(step.name, "OK", elapsed, rows)
 
     logger.info("step %-14s OK     in %5.1fs  rader=%s", step.name, elapsed, rows)
     return StepResult(step.name, "OK", elapsed, rows)
