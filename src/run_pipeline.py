@@ -57,17 +57,38 @@ STEPS: tuple[Step, ...] = (
         description="Votes -> stg.votering",
     ),
     Step(
+        name="dim_votering",
+        module="src.transform.dim_votering",
+        layer="dw",
+        description="stg.votering -> dw.dim_votering (SCD-2)",
+        depends_on=("voteringar",),
+    ),
+    Step(
         name="dim_ledamot",
         module="src.transform.dim_ledamot",
         layer="dw",
         description="stg.person -> dw.dim_ledamot (SCD-2)",
         depends_on=("ledamoter",),
     ),
+    Step(
+        name="fakta_rost",
+        module="src.transform.fakta_rost",
+        layer="dw",
+        description="stg.votering + dw.dim_* -> dw.fakta_rost",
+        depends_on=("voteringar", "dim_votering", "dim_ledamot"),
+    ),
 )
 
 
 class StepFailed(Exception):
     """Raised when a pipeline step does not complete."""
+
+
+# Steps where a zero row count means something is broken rather than "no data".
+# A transform over a populated staging table that produces nothing is almost
+# always a join that matches nothing - which is silent and easy to miss,
+# because the step itself raises no error.
+EXPECT_ROWS = frozenset({"fakta_rost", "dim_ledamot", "dim_votering"})
 
 
 def _resolve_callable(module_name: str):
@@ -146,6 +167,21 @@ def run_step(step: Step, engine, korning_id: str) -> StepResult:
     rows = result if isinstance(result, int) else None
     if rows is None:
         logger.warning("%s returned no row count — run() should return int", step.module)
+
+    if rows == 0 and step.name in EXPECT_ROWS:
+        logger.error(
+            "step %-14s loaded 0 rader — förväntas aldrig vara tomt. "
+            "Troligen en join som inte matchar.",
+            step.name,
+        )
+        return StepResult(
+            step.name,
+            "FAILED",
+            elapsed,
+            0,
+            "Steget laddade 0 rader men förväntas aldrig vara tomt",
+        )
+
     logger.info("step %-14s OK     in %5.1fs  rader=%s", step.name, elapsed, rows)
     return StepResult(step.name, "OK", elapsed, rows)
 
