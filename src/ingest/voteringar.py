@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import xml.etree.ElementTree as ET
@@ -24,6 +25,8 @@ API_SIZE = 10000
 REQUEST_DELAY = 0
 
 SESSION = requests.Session()
+
+logger = logging.getLogger("riksdag")
 
 
 def ensure_list(value) -> list:
@@ -344,6 +347,7 @@ def load_voting_details(
     """Fetch, validate, and load XML detail rows for voting events."""
 
     inserted_total = 0
+    skipped_total = 0
 
     for index, event in enumerate(events, start=1):
         votering_id = event["votering_id"]
@@ -356,14 +360,33 @@ def load_voting_details(
             run_id=run_id,
         )
 
-        validate_voting_event(
-            votering_id=votering_id,
-            votes=votes,
-            expected_count=expected_count,
-        )
+        try:
+            validate_voting_event(
+                votering_id=votering_id,
+                votes=votes,
+                expected_count=expected_count,
+            )
+        except ValueError as exc:
+            # Riksdagen may publish a summary before its member-level detail
+            # rows are available. Keep the summary, skip only this event, and
+            # leave it absent from stg.votering so the next run retries it.
+            skipped_total += 1
+            logger.warning(
+                "Skipping incomplete voting event %s; it will be retried on the next run. %s",
+                votering_id,
+                exc,
+            )
+            time.sleep(REQUEST_DELAY)
+            continue
 
         inserted_total += insert_voteringar(conn, votes)
         time.sleep(REQUEST_DELAY)
+
+    if skipped_total:
+        logger.warning(
+            "Skipped %s incomplete voting event(s); all remain eligible for retry.",
+            skipped_total,
+        )
 
     return inserted_total
 
