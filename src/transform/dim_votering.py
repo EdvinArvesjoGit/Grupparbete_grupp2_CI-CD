@@ -65,6 +65,8 @@ def load_dim_votering():
     print(f"Nya voteringar tillagda: {antal_nya}")
     print(f"Överhoppade (ogiltig data): {antal_overhoppade}")
 
+    return antal_nya
+
 
 def _rensa_votering(votering):
     """
@@ -114,6 +116,11 @@ def _infoga_votering(conn, votering):
             "datum": votering["datum"],
         },
     )
+
+
+def run(engine=None, korning_id=None):
+    """Standard pipeline entry point. Returns rows written this run."""
+    return load_dim_votering()
 
 
 if __name__ == "__main__":
